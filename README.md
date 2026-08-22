@@ -61,6 +61,8 @@ You get a prefab that plays, and the pieces it is made of:
 Drop the prefab in a scene and it animates.
 
 
+![The baked prefab in the editor scene running a baked animation](Documentation~/images/bakedAnimationExample.gif)
+
 ## Playing clips
 
 ```csharp
