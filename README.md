@@ -79,12 +79,17 @@ Clips are addressed by name, matched ignoring case, so reordering them in the ba
 
 Scrub the preview to a frame and press **Add at frame**. Events on the source clip are imported automatically, and anything you place in the baker wins over them.
 
+![The event tracker](Documentation~/images/bakedAnimationEvents.png)
+
 ```csharp
 animator.ClipEventFired += (a, e) => { if (e.name == "Hit") DealDamage(); };
 animator.ClipFinished   += (a, clip) => { if (clip == "Attack") Recover(); };
 ```
 
 For people who would rather not write that, add a **VAT Event Receiver**: it lists the markers in the bake and gives each one a UnityEvent.
+
+![Events Receiver script](Documentation~/images/animationEventsScript.png)
+
 
 ## Mesh sections
 
