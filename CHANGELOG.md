@@ -5,6 +5,16 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Reset Bake**, in the bake settings panel. Keeps the selected object and puts clip selection, per-clip frame ranges, events, sections, texture and output settings back to their defaults,   after confirming. Nothing already written to disk is touched.
+
+### Changed
+
+- The bake settings asset moved out of its own section at the top of the window and onto the   **Source** row, behind a button that opens it only when it is wanted. The button is marked when   a settings asset is loaded.
+
 ## [1.0.0]
 
 First release.
