@@ -173,6 +173,7 @@ namespace MiVertexAnimation
         [System.NonSerialized] private int _previewCurrentFrame;
 
         // Index into _sections, or -1 for none. View state, so it is not worth an undo step.
+        [System.NonSerialized] private bool _showBakeSettings;
         [System.NonSerialized] private int _highlightSection = -1;
         [System.NonSerialized] private readonly HashSet<int> _expandedSections = new HashSet<int>();
         [System.NonSerialized] private Material _maskMaterial;
@@ -364,23 +365,45 @@ namespace MiVertexAnimation
         /// <returns>False when the settings are not complete enough to preview or bake.</returns>
         private bool DrawSettingsPane()
         {
-            DrawSettingsRow();
 
             VATUi.BeginSection("Source", VATIcons.First("Prefab Icon", "GameObject Icon"));
-            EditorGUI.BeginChangeCheck();
-            _target = (GameObject)EditorGUILayout.ObjectField(
-                new GUIContent("Prefab / Object", "A prefab or scene object with a SkinnedMeshRenderer and an Animator."),
-                _target, typeof(GameObject), true);
-            if (EditorGUI.EndChangeCheck())
+
+            using (new EditorGUILayout.HorizontalScope())
             {
-                // A different object means a different set of clips, so markers and ranges keyed by
-                // clip name would be meaningless, and a name that happens to match would be worse than
-                // meaningless. A reload restores both from the snapshot instead of coming through here.
-                _authoredEvents.Clear();
-                _clipRanges.Clear();
-                _selectedEvent = -1;
-                Refresh();
+                EditorGUI.BeginChangeCheck();
+                _target = (GameObject)EditorGUILayout.ObjectField(
+                    new GUIContent("Prefab / Object",
+                        "A prefab or scene object with a SkinnedMeshRenderer and an Animator."),
+                    _target, typeof(GameObject), true);
+
+                if (EditorGUI.EndChangeCheck())
+                {
+                    // A different object means a different set of clips, so markers and ranges keyed by clip name would be meaningless,
+                    // and a name that happens to match would be worse than meaningless.
+                    // A reload restores both from the snapshot instead of coming through here.
+                    _authoredEvents.Clear();
+                    _clipRanges.Clear();
+                    _selectedEvent = -1;
+                    Refresh();
+                }
+
+                /*
+                 * Folded away, because a bake settings asset is something you reach for at the start of a session and then never again.
+                 * As its own section at the top of the window it was costing a heading and a row on every repaint to say nothing.
+                 */
+                bool loaded = _settings;
+                if (VATUi.Button(VATUi.Content(loaded && !_showBakeSettings
+                        ? "Bake Settings *" : "Bake Settings",
+                        loaded
+                            ? $"Loaded from '{_settings.name}'. Load another, or start this object over."
+                            : "Load a saved bake, or start this object over.",
+                        VATIcons.First("Settings", "_Popup", "EditorSettings Icon")),
+                        _showBakeSettings ? VATUi.PRIMARY : (loaded ? VATUi.CAUTION : Color.white),
+                        GUILayout.Width(140f)))
+                    _showBakeSettings = !_showBakeSettings;
             }
+
+            if (_showBakeSettings) DrawBakeSettingsPanel();
 
             if (!_target)
             {
@@ -2567,58 +2590,153 @@ namespace MiVertexAnimation
             Repaint();
         }
 
-        private void DrawSettingsRow()
+        /*
+         * Everything to do with a saved bake in one place, under the object it belongs to:
+         * what is loaded, how to load something else, and how to put this object back to a clean bake.
+         */
+        /// <summary>The folded panel under the Source row.</summary>
+        private void DrawBakeSettingsPanel()
         {
-            VATUi.BeginSection("Bake Settings", VATIcons.First("Settings", "_Popup", "EditorSettings Icon"));
-
-            using (new EditorGUILayout.HorizontalScope())
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
-                EditorGUI.BeginChangeCheck();
-                VATBakeSettings dropped = (VATBakeSettings)EditorGUILayout.ObjectField(
-                    new GUIContent("Saved Bake",
-                        "Drop a saved settings asset here to restore that bake exactly - same clips, " +
-                        "same order, same frame range and output."),
-                    _settings, typeof(VATBakeSettings), false);
-
-                if (EditorGUI.EndChangeCheck())
+                using (new EditorGUILayout.HorizontalScope())
                 {
-                    if (!dropped) _settings = null;
-                    else if (dropped != _settings)
+                    EditorGUI.BeginChangeCheck();
+                    VATBakeSettings dropped = (VATBakeSettings)EditorGUILayout.ObjectField(
+                        new GUIContent("Loaded",
+                            "Drop a saved settings asset here to restore that bake exactly - same clips, " +
+                            "same order, same frame range and output. Clear it to leave the current " +
+                            "values in place but stop them being written back to that asset."),
+                        _settings, typeof(VATBakeSettings), false);
+
+                    if (EditorGUI.EndChangeCheck())
                     {
-                        ApplySettings(dropped);
+                        if (!dropped) _settings = null;
+                        else if (dropped != _settings)
+                        {
+                            ApplySettings(dropped);
+                            GUIUtility.ExitGUI();
+                        }
+                    }
+
+                    Rect loadRect = GUILayoutUtility.GetRect(new GUIContent("Load..."),
+                        EditorStyles.miniButton, GUILayout.Width(70f));
+
+                    using (new VATUi.Tinted(VATUi.GENTLE))
+                    {
+                        if (GUI.Button(loadRect, "Load...", EditorStyles.miniButton))
+                        {
+                            PopupWindow.Show(loadRect, new VATBakeSettingsPickerPopup(picked =>
+                            {
+                                ApplySettings(picked);
+                                Repaint();
+                            }));
+                        }
+                    }
+                }
+
+                if (_detectedSettings && _detectedSettings != _settings)
+                {
+                    EditorGUILayout.HelpBox($"'{_detectedSettings.name}' was baked from this object.",
+                        MessageType.Info);
+
+                    if (VATUi.Button(VATUi.Content($"Load {_detectedSettings.name}",
+                            VATIcons.Named("Settings")), VATUi.GENTLE))
+                    {
+                        ApplySettings(_detectedSettings);
                         GUIUtility.ExitGUI();
                     }
                 }
 
-                Rect loadRect = GUILayoutUtility.GetRect(new GUIContent("Load"), EditorStyles.miniButton,
-                    GUILayout.Width(52f));
-
-                using (new VATUi.Tinted(VATUi.GENTLE))
+                using (new EditorGUILayout.HorizontalScope())
                 {
-                    if (GUI.Button(loadRect, "Load", EditorStyles.miniButton))
+                    GUILayout.FlexibleSpace();
+
+                    using (new EditorGUI.DisabledScope(!_target))
                     {
-                        PopupWindow.Show(loadRect, new VATBakeSettingsPickerPopup(picked =>
+                        if (VATUi.Button(VATUi.Content("Reset Bake",
+                                "Keeps the object and puts everything else back to a fresh bake: clips, " +
+                                "frame ranges, events, sections, texture and output.",
+                                VATIcons.First("Refresh", "RotateTool")),
+                                VATUi.DESTRUCTIVE, GUILayout.Width(130f)) && ConfirmReset())
                         {
-                            ApplySettings(picked);
-                            Repaint();
-                        }));
+                            ResetBake();
+                            GUIUtility.ExitGUI();
+                        }
                     }
                 }
             }
+        }
 
-            if (_detectedSettings && _detectedSettings != _settings)
-            {
-                EditorGUILayout.HelpBox($"'{_detectedSettings.name}' was baked from this object.", MessageType.Info);
+        private bool ConfirmReset()
+        {
+            return EditorUtility.DisplayDialog("Reset Bake",
+                $"Put '{_target.name}' back to a fresh bake?\n\nThe object stays selected. Clip " +
+                "selection, per-clip frame ranges, events, sections, texture and output settings all " +
+                "go back to their defaults, and the loaded settings asset is unlinked.\n\nNothing " +
+                "already written to disk is touched.",
+                "Reset", "Cancel");
+        }
 
-                if (VATUi.Button(VATUi.Content($"Load {_detectedSettings.name}",
-                        VATIcons.Named("Settings")), VATUi.GENTLE))
-                {
-                    ApplySettings(_detectedSettings);
-                    GUIUtility.ExitGUI();
-                }
-            }
+        /*
+         * Deliberately spelled out rather than restoring a default snapshot: the window has to end up
+         * exactly where a newly opened one would, and a list of assignments is the only version of that
+         * which can be read against the field declarations to check.
+         */
+        /// <summary>
+        /// Puts every setting back to its default, keeping the object that is selected.
+        /// </summary>
+        private void ResetBake()
+        {
+            _settings = null;
+            _explicitClip = null;
+            _frameRangeClip = null;
+            _selectedEvent = -1;
 
-            VATUi.EndSection();
+            _authoredEvents.Clear();
+            _clipRanges.Clear();
+            _sections.Clear();
+            _sectionsEnabled = false;
+            _highlightSection = -1;
+            _testRotation = Vector3.zero;
+            _testWeight = 1f;
+
+            _rendererMode = VATRendererMode.SELECTED;
+            _perClipRanges = false;
+            _startFrame = 0;
+            _endFrame = 1;
+            _frameStep = 1;
+            _trimLoopFrame = true;
+            _blendDuration = .15f;
+            _frameQuality = VATFrameQuality.BALANCED;
+            _stepTolerance = BALANCED_TOLERANCE;
+
+            _removeRootMotion = true;
+            _lockRootX = true;
+            _lockRootY = false;
+            _lockRootZ = true;
+
+            _textureWidth = 1024;
+            _bakeNormals = true;
+            _positionPrecision = VATPositionPrecision.NORMALIZED;
+            _normalPrecision = VATNormalPrecision.OCTAHEDRAL;
+
+            _outputPath = "Assets/VAT";
+            _fileName = string.Empty;
+            _createMaterial = true;
+            _materialShader = null;
+            _createPrefab = true;
+            _frameBlend = true;
+            _updateExisting = true;
+            _saveSettings = true;
+
+            InvalidateSectionCache();
+            DestroyPreview();
+
+            // Rebuilds the renderer and clip lists and picks the first clip, which is what a window
+            // being handed this object for the first time would have.
+            Refresh();
+            MarkEdited();
         }
 
         /*

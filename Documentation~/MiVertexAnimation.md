@@ -2,12 +2,9 @@
 
 Bake skinned animation to vertex textures for large crowds.
 
-Turns a `SkinnedMeshRenderer` + `AnimationClip` into a Vertex Animation Texture, so crowds of
-identical animated entities render with no Animator, no CPU skinning and no bone Transforms -
-then plays them back at runtime with clip switching, cross-fading and animation events.
+Turns a `SkinnedMeshRenderer` + `AnimationClip` into a Vertex Animation Texture, so crowds of identical animated entities render with no Animator, no CPU skinning and no bone Transforms - then plays them back at runtime with clip switching, cross-fading and animation events.
 
-Self-contained: copy the whole `MiVertexAnimation` folder into any URP project. No models,
-scenes, textures or packages come with it.
+Self-contained: copy the whole `MiVertexAnimation` folder into any URP project. No models, scenes, textures or packages come with it.
 
 ```
 MiVertexAnimation/
@@ -51,38 +48,21 @@ MiVertexAnimation/
     VAT_Minimal.shader       one pass, no includes, written to be read
 ```
 
-One type per file, grouped into domain folders. `Runtime/` and `Editor/` are the assembly roots,
-so an `.asmdef` dropped in either one covers everything beneath it.
+One type per file, grouped into domain folders. `Runtime/` and `Editor/` are the assembly roots, so an `.asmdef` dropped in either one covers everything beneath it.
 
 ## The window
 
-Sections are boxed and headed with Unity's own icons, and buttons are tinted by what they do: blue
-for the bake, green for anything that only looks or opens, red for anything that throws work away.
-Both icons and colours can be turned off in the window's own menu (the three dots in its tab), which
-also resets the preview height. Those live in `EditorPrefs`, so they follow you between projects
-rather than being committed with a bake.
+Sections are boxed and headed with Unity's own icons, and buttons are tinted by what they do: blue for the bake, green for anything that only looks or opens, red for anything that throws work away. Both icons and colours can be turned off in the window's own menu (the three dots in its tab), which also resets the preview height. Those live in `EditorPrefs`, so they follow you between projects rather than being committed with a bake.
 
-Once the window is wide enough, the settings sit on the left and the preview and events on the
-right, with a drag bar between them. Each side scrolls on its own, so reading down the output
-settings does not drag the preview off the top. Below about 650 pixels wide there is no room for two
-columns and everything stacks into one, as before. The layout and the split position are both in the
-window menu, and `Preview Beside Settings` turns the split off if you would rather always stack.
+Once the window is wide enough, the settings sit on the left and the preview and events on the right, with a drag bar between them. Each side scrolls on its own, so reading down the output settings does not drag the preview off the top. Below about 650 pixels wide there is no room for two columns and everything stacks into one, as before. The layout and the split position are both in the window menu, and `Preview Beside Settings` turns the split off if you would rather always stack.
 
-**Ctrl+Z** undoes the last change made in the baker, and **Ctrl+Shift+Z** or **Ctrl+Y** redoes it.
-The baker keeps its own undo stack rather than using Unity's, so this walks back baker edits only and
-never reaches past them into a scene or asset change. It is bound to the window's shortcut context, so
-it only fires while the baker has focus and can be rebound in Edit > Shortcuts. A slider drag is one
-step, and so is a run of typing. Undo and redo are also in the window menu.
+**Ctrl+Z** undoes the last change made in the baker, and **Ctrl+Shift+Z** or **Ctrl+Y** redoes it. The baker keeps its own undo stack rather than using Unity's, so this walks back baker edits only and never reaches past them into a scene or asset change. It is bound to the window's shortcut context, so it only fires while the baker has focus and can be rebound in Edit > Shortcuts. A slider drag is one step, and so is a run of typing. Undo and redo are also in the window menu.
 
-The **preview** is resized by dragging the grip underneath it. **Browse...** next to the output
-folder opens the system folder picker; anything outside the project's `Assets` folder is refused,
-since `AssetDatabase` cannot write a bake there.
+The **preview** is resized by dragging the grip underneath it. **Browse...** next to the output folder opens the system folder picker; anything outside the project's `Assets` folder is refused, since `AssetDatabase` cannot write a bake there.
 
 ## Adding VAT to a shader you already have
 
-**Create Material** in the Output section has a **Shader** field beside it. Anything that reads a VAT
-works there, including your own. The baker warns before you bake if the shader you picked is missing
-something it needs.
+**Create Material** in the Output section has a **Shader** field beside it. Anything that reads a VAT works there, including your own. The baker warns before you bake if the shader you picked is missing something it needs.
 
 The smallest set a shader has to declare:
 
@@ -147,7 +127,7 @@ orbit, scroll to zoom.
 You get the textures, a configured material and a ready prefab. Drop the prefab in a
 scene and it animates. The five layout values that have to match the bake
 (`Total Frames`, `Frame Rate`, `Texture Width/Height`, `Rows Per Frame`) are filled in
-for you — getting any of them wrong scrambles the mesh, so don't hand-edit them.
+for you - getting any of them wrong scrambles the mesh, so don't hand-edit them.
 
 ## How the data is laid out
 
@@ -160,7 +140,7 @@ y = floor(N / textureWidth) + rowsPerFrame * F
 
 Each frame occupies a contiguous block of `rowsPerFrame` rows, so there is no vertex
 count limit. The shader addresses it with `SV_VertexID`, which means **the bake is tied
-to one exact vertex buffer** — anything that changes vertex count or order invalidates it.
+to one exact vertex buffer** - anything that changes vertex count or order invalidates it.
 
 Positions are stored as raw object-space floats (`RGBAHalf`), which is why the textures
 must import uncompressed, point-filtered, clamped and without mips. The baker sets all
@@ -457,7 +437,7 @@ setup from memory.
 
 Three ways back to it:
 
-- **Drop** a settings asset on the **Bake Settings** field at the top of the window.
+- **Press Bake Settings**, beside the object field, and drop a settings asset on the **Loaded** field or pick one with **Load...**. The same panel has **Reset Bake**, which keeps the object and puts everything else back to a fresh bake.
 - **Load** opens a picker filtered to settings assets only.
 - **Assign the source prefab** and, if a settings asset was baked from it, the window offers to
   load it.
@@ -495,7 +475,7 @@ texture fetch into the shadow and depth passes.
 |---|---|
 | `Phase Variation` | 0 = every instance in lockstep. Raise it to de-sync a crowd. Derived from world position, so it costs nothing and keeps the SRP Batcher working. |
 | `Playback Speed` | Multiplier on the loop rate. |
-| `Frame Blend` | Interpolates between frames. Lets you bake with a high frame step and still look smooth — at 4 texture fetches per vertex instead of 2. |
+| `Frame Blend` | Interpolates between frames. Lets you bake with a high frame step and still look smooth - at 4 texture fetches per vertex instead of 2. |
 
 ## LOD
 
@@ -508,7 +488,7 @@ texture fetch into the shadow and depth passes.
   animation will pop at LOD transitions.
 
 Mesh LOD and LODGroup only apply to real MeshRenderers. `Graphics.RenderMeshInstanced`
-does no LOD selection — you would have to bucket instances by distance yourself.
+does no LOD selection - you would have to bucket instances by distance yourself.
 
 ## Limits
 
@@ -526,12 +506,12 @@ does no LOD selection — you would have to bucket instances by distance yoursel
   The preview shows this honestly - toggle it and watch.
 - No tangent-space normal maps (see above); normals themselves are baked and correct.
 - No motion vectors, so expect ghosting under TAA or motion blur.
-- Root motion, IK and blend trees do not survive baking (animation events do - see above) — VAT has no
+- Root motion, IK and blend trees do not survive baking (animation events do - see above) - VAT has no
   skeleton at runtime. Bone-attached hitboxes, sockets and ragdolls need a separate plan.
 
 ## Performance notes
 
-VAT removes CPU cost, not GPU cost — and it makes each vertex slightly more expensive
+VAT removes CPU cost, not GPU cost - and it makes each vertex slightly more expensive
 (2–4 dependent texture fetches). Every render pass re-runs that vertex work, so with a
 depth-normals prepass and four shadow cascades you can pay it 6 times per frame. If you
 are GPU-bound with a large crowd, look at shadow distance, cascade count and SSAO before
@@ -541,7 +521,7 @@ you look at draw call counts.
 
 A VAT is frozen: every vertex sits exactly where the texture says, and nothing can react to
 anything. Sections are the exception. One is a region of the mesh that stays drivable after the
-bake — a head that turns to look at the player, a torso that leans, an arm that recoils.
+bake - a head that turns to look at the player, a torso that leans, an arm that recoils.
 
 ### Baking one
 
@@ -558,8 +538,8 @@ down the neck or the waist is the one the rigger painted, not something this pac
   from slightly above the neck joint.
 - **Max Angle** is recorded on the clip set, and the runtime clamps to it.
 
-**Highlight** paints the weights onto the preview — cold where the section has no hold, warm where
-it owns the vertex outright — and marks the pivot. While it is on, **Test Turn** rotates the section
+**Highlight** paints the weights onto the preview - cold where the section has no hold, warm where
+it owns the vertex outright - and marks the pivot. While it is on, **Test Turn** rotates the section
 in the preview with the same arithmetic the shader uses, so a falloff can be judged before baking
 rather than after.
 
@@ -578,7 +558,7 @@ driver.Release("Head", 0.6f);                           // ease back
 driver.Track("Head", driver.LookRotation("Head", player.position));  // keep following
 ```
 
-`TurnTo` describes the transition once — start, end, when it began, how long it takes — and the GPU
+`TurnTo` describes the transition once - start, end, when it began, how long it takes - and the GPU
 walks the curve. Nothing runs per frame, so two hundred characters glancing at the player cost two
 hundred writes rather than two hundred a frame. Redirecting one mid-turn is continuous: the driver
 evaluates where the section is right now and makes that the new starting pose.
@@ -587,15 +567,14 @@ evaluates where the section is right now and makes that the new starting pose.
 CPU and pushes every frame. Everything else should use `TurnTo`.
 
 Both go through the same four shader values, and a duration of 0 is what makes a write land
-immediately — there is no separate CPU code path in the shader.
+immediately - there is no separate CPU code path in the shader.
 
-`Samples/VATSectionSample.cs` is a worked example of all of it, and the inspector on
-`VATSectionDriver` will pose any baked section by hand, in edit mode, without writing any code.
+`Samples/VATSectionSample.cs` is a worked example of all of it, and the inspector on `VATSectionDriver` will pose any baked section by hand, in edit mode, without writing any code.
 
 ### Limits
 
 - Four sections per bake, one per component of UV3.
-- Sections do not chain. If one bone sits under another — a head inside a spine — priority still
+- Sections do not chain. If one bone sits under another - a head inside a spine - priority still
   decides who owns the shared vertices, but turning the outer section will not carry the inner one
   with it. The baker warns when it sees this.
 - Bounds are padded from Max Angle at bake time. A large positional offset is whatever gameplay
@@ -605,7 +584,7 @@ immediately — there is no separate CPU code path in the shader.
 
 Baked textures are written non-readable. A texture built from script keeps a full copy of its
 pixels in system memory by default, on top of the copy on the GPU, and that copy is only worth
-having if something calls `GetPixels` on it — nothing here does, because the shader reads these
+having if something calls `GetPixels` on it - nothing here does, because the shader reads these
 on the GPU. Bakes made before this changed can be fixed in place from
 **Tools > MiVertexAnimation > Settings**, which reports what it saves
 before doing anything. It changes nothing about how they render.
@@ -614,8 +593,8 @@ before doing anything. It changes nothing about how they render.
 
 Blotchy angular patches on a curved surface, which vanish when the main light stops casting
 shadows, are self-shadowing acne rather than anything the bake did. Every pass here writes the
-same vertex positions — the shadow caster carries the identical keyword set to the lit pass, so
-the shadow map always describes the geometry that is actually being lit — and the caster biases
+same vertex positions - the shadow caster carries the identical keyword set to the lit pass, so
+the shadow map always describes the geometry that is actually being lit - and the caster biases
 along the animated normal, not the bind-pose one.
 
 Tune it on the light and the URP asset: **Normal Bias** first, then shadow resolution and cascade
