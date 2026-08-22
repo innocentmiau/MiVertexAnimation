@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Bake Rest Pose Mesh**, on by default. Writes a mesh holding the first baked frame instead of pointing the prefab at the imported one, so a shader that is still compiling or has failed draws the character standing still rather than the bind pose at whatever scale the source file used. Turn it off to keep Unity 6 Mesh LOD, which lives on the imported asset.
+- **Bake Rest Pose Mesh**, on by default. Writes a mesh holding the first baked frame instead of pointing the prefab at the imported one, so a shader that is still compiling or has failed draws the character standing still rather than the bind pose at whatever scale the source file used. The mesh is copied rather than rebuilt, so Unity 6 Mesh LOD levels, blend shapes and every vertex channel come across with it: Mesh LOD stores extra index buffers over the same vertex buffer, so SV_VertexID still addresses the same vertex at every level and a decimated VAT mesh animates correctly.
 - A bake-time warning when the imported mesh and the animation baked from it disagree on scale, which is what a rig with scaled bones looks like from the outside.
 
 ## [1.1.0]

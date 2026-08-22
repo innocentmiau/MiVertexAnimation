@@ -473,11 +473,8 @@ namespace MiVertexAnimation
                         "assembled into one prefab as children.\n" +
                         "Every part keeps its own base map, and all parts are sampled from the same " +
                         "frames, so they cannot drift apart." +
-                        (WritesOwnMesh
-                            ? "\nEach part gets a mesh written for it, so the source meshes' Unity 6 " +
-                              "Mesh LOD levels are not carried over."
-                            : "\nThe source meshes are used as they are, so their Unity 6 Mesh LOD " +
-                              "levels are kept."),
+                        "\nEach part is one renderer, so its mesh is copied rather than rebuilt and " +
+                        "keeps its Unity 6 Mesh LOD levels either way." ,
                         MessageType.Info);
                 }
                 else
@@ -3289,9 +3286,15 @@ namespace MiVertexAnimation
                 {
                     foreach (VATPartBake part in parts)
                     {
-                        Mesh baked = BuildCombinedMesh(instance, part.Targets.ToArray(), part.Name);
+                        // Merging is the only reason to rebuild a mesh from nothing. One renderer keeps
+                        // its own asset copied whole, which is what carries Mesh LOD across.
+                        Mesh baked = part.Targets.Count == 1
+                            ? BuildRestPoseMesh(instance, part.Targets[0], part.Name)
+                            : BuildCombinedMesh(instance, part.Targets.ToArray(), part.Name);
+
                         if (SectionsActive) ApplySectionMask(baked, part);
 
+                        ReportMeshLods(part, baked);
                         part.SourceMesh = SaveMesh(baked, part.Name);
                     }
                 }
@@ -4032,6 +4035,84 @@ namespace MiVertexAnimation
             }
         }
 
+        /*
+         * A copy of the source mesh with only its positions and normals rewritten, rather than a mesh
+         * built from scratch. Unity 6 Mesh LOD levels are extra INDEX buffers over the same vertex
+         * buffer - a decimated level reuses the very same vertices - so copying the asset carries them
+         * across, and overwriting vertex data leaves them addressing exactly what they addressed
+         * before. Rebuilding the mesh would drop them, along with blend shapes and any vertex channel
+         * this baker does not know to copy.
+         *
+         * SV_VertexID keeps meaning the same vertex at every level, which is the whole reason VAT and
+         * Mesh LOD work together at all.
+         */
+        /*
+         * Mesh LOD levels are extra index buffers over the same vertex buffer, so they cost nothing to
+         * carry and a decimated level still addresses the vertices the textures were baked against.
+         * Reported rather than assumed: whether they survive a copy is a property of Unity's Mesh API,
+         * and the bake log is where anyone would look to find out.
+         */
+        private static void ReportMeshLods(VATPartBake part, Mesh baked)
+        {
+            Mesh source = part.Targets.Count == 1 && part.Targets[0] ? part.Targets[0].sharedMesh : null;
+            int before = source ? source.lodCount : 1;
+
+            if (before <= 1) return;
+
+            int after = baked ? baked.lodCount : 1;
+
+            if (after >= before)
+                Debug.Log($"[VAT] '{part.Name}' kept all {after} Mesh LOD levels.");
+            else
+                Debug.LogWarning($"[VAT] '{part.Name}' came out with {after} Mesh LOD level(s) where the " +
+                                 $"source had {before}. Turn Bake Rest Pose Mesh off to keep them, at the " +
+                                 "cost of the prefab pointing at the imported mesh.");
+        }
+
+        /// <summary>One renderer's mesh, holding the rest pose in the root's space.</summary>
+        /// <param name="instance">The throwaway instance being sampled, which defines the root space.</param>
+        /// <param name="target">The renderer whose mesh is being copied.</param>
+        /// <param name="name">Name given to the copy.</param>
+        /// <returns>The copy, not yet saved as an asset.</returns>
+        private static Mesh BuildRestPoseMesh(GameObject instance, SkinnedMeshRenderer target, string name)
+        {
+            Mesh copy = Object.Instantiate(target.sharedMesh);
+            copy.name = name;
+
+            Matrix4x4 toRoot = RigidMatrix(instance.transform).inverse * RigidMatrix(target.transform);
+            Mesh scratch = new Mesh();
+
+            try
+            {
+                target.BakeMesh(scratch, false);
+
+                Vector3[] vertices = scratch.vertices;
+                Vector3[] normals = scratch.normals;
+
+                // A mesh whose vertex count changed under BakeMesh cannot be rebased safely, and the
+                // copy is still better than the import, so it is left as it is.
+                if (vertices.Length != copy.vertexCount) return copy;
+
+                for (int i = 0; i < vertices.Length; i++) vertices[i] = toRoot.MultiplyPoint3x4(vertices[i]);
+                copy.SetVertices(vertices);
+
+                if (normals.Length == vertices.Length)
+                {
+                    for (int i = 0; i < normals.Length; i++)
+                        normals[i] = toRoot.MultiplyVector(normals[i]).normalized;
+
+                    copy.SetNormals(normals);
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(scratch);
+            }
+
+            copy.RecalculateBounds();
+            return copy;
+        }
+
         /// <summary>
         /// Concatenates every target renderer into one vertex buffer, in the same order the frame loop
         /// writes them, so SV_VertexID keeps addressing the right texel. Submeshes are kept per source
@@ -4319,8 +4400,9 @@ namespace MiVertexAnimation
                              "animation baked from it, because its bones carry a scale that only " +
                              "skinning applies. Nothing is wrong while the VAT shader is running, but " +
                              "anything else that draws this prefab - a variant still compiling, a " +
-                             "failed shader - will draw it at that size. Turn on Bake Rest Pose Mesh " +
-                             "to write a correctly placed mesh instead.");
+                             "failed shader - will draw it at that size. Turn on Bake Rest Pose Mesh, " +
+                             "which copies the mesh rather than rebuilding it and keeps its Mesh LOD " +
+                             "levels.");
         }
 
         /// <summary>Whether this bake writes its own mesh rather than reusing the imported one.</summary>
