@@ -97,6 +97,8 @@ A VAT is frozen - every vertex is where the texture says. A section is the excep
 
 Turn **Sections** on in the baker, add one, and pick a bone. The region comes from the rig's own skin weights, so the falloff down a neck is the one the rigger painted. **Highlight** paints it onto the preview and **Test Turn** moves it before you bake anything.
 
+![Mesh Section highlighted to show what it will affect and how much](Documentation~/images/meshSectionHighlighted.png)
+
 ```csharp
 VATSectionDriver driver = GetComponent<VATSectionDriver>();
 
@@ -108,6 +110,7 @@ driver.Release("Head", 0.6f);
 
 `Samples/VATSectionSample.cs` is a worked example of all four modes.
 
+![VAT Section Sample script that helps understand what's possible](Documentation~/images/meshSectionSampleScript.png)
 ## Limits
 
 - **16 clips** per bake, **4 sections** per bake.
