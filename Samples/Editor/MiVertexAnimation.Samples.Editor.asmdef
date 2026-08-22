@@ -1,0 +1,19 @@
+{
+    "name": "MiVertexAnimation.Samples.Editor",
+    "rootNamespace": "MiVertexAnimation",
+    "references": [
+        "MiVertexAnimation",
+        "MiVertexAnimation.Samples"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

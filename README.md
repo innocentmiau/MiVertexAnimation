@@ -1,0 +1,122 @@
+# MiVertexAnimation
+
+Bakes a `SkinnedMeshRenderer` and its `AnimationClip`s into textures, so a crowd animates entirely on the GPU with no Animator, no bones and no per-frame CPU work.
+
+Skinning hundreds of characters costs CPU time you cannot get back, and it is the same work every frame for animation that never changes. This bakes it once. What ships is a mesh, two textures and a material, and every instance plays from the same ones, so a hundred enemies are a hundred instances of one draw call.
+
+![The baker window: source and clips on the left, live preview and event track on the right](Documentation~/images/bakerWindow.png)
+
+## What you can do
+
+- **Bake several clips at once** into one texture array, each with its own frame range and frame step.
+- **Preview before baking**, with the real frame stepping and frame blending, so a setting that would ruin the animation shows up before it costs a bake.
+- **Place animation events** on a track and have them fire at runtime, without an Animator.
+- **Wire those events to UnityEvents** with no code, for the rest of the team.
+- **Turn part of the mesh after the bake** - a head that looks at the player, a torso that leans, an arm that recoils.
+- **Choose what precision costs you**, from vertex positions down to a hundredth of a millimetre to normals a hundred times finer than eight-bit at the same size.
+- **Re-run any bake later** from the settings asset it wrote next to itself.
+
+## Requirements
+
+- Unity **6.3** (`6000.3`) or newer
+- **Universal Render Pipeline**
+- A rig with a `SkinnedMeshRenderer` and an `Animator`
+
+## Installation
+
+In Unity, open **Window > Package Manager**, click **+ > Add package from git URL**, and paste:
+
+```
+https://github.com/innocentmiau/MiVertexAnimation.git
+```
+
+To pin a version, add a tag: `...MiVertexAnimation.git#v1.0.0`
+
+Or add it to `Packages/manifest.json` yourself:
+
+```json
+"com.andreleandrodev.mivertexanimation": "https://github.com/innocentmiau/MiVertexAnimation.git"
+```
+
+## Baking
+
+Open **Tools > MiVertexAnimation > Baker**.
+
+1. Drop a prefab into **Prefab / Object**.
+2. Pick the clips to bake.
+3. Set an output folder and a name.
+4. Press **Bake**.
+
+You get a prefab that plays, and the pieces it is made of:
+
+| Written | What it is |
+| --- | --- |
+| `Name_Positions` | One vertex position per texel, one slice per clip |
+| `Name_Normals` | The same for normals, unless Bake Normals is off |
+| `Name.mat` | Points at both, and carries the frame counts and rates |
+| `Name_Clips` | Which slice is which clip, plus its events and sections |
+| `Name.prefab` | Mesh, material, correct animated bounds and a `VATAnimator` |
+| `Name_BakeSettings` | Everything you chose, so the bake can be re-run |
+
+Drop the prefab in a scene and it animates.
+
+![The baked prefab in a scene, a crowd of instances sharing one draw call](Documentation~/images/crowd.png)
+
+## Playing clips
+
+```csharp
+VATAnimator animator = GetComponent<VATAnimator>();
+
+animator.Play("Walk");                 // cross-fades and loops
+animator.PlayOnce("Attack", "Idle");   // plays once, then returns
+animator.Snap("Idle");                 // no cross-fade
+```
+
+Clips are addressed by name, matched ignoring case, so reordering them in the baker cannot silently repoint your code.
+
+## Events
+
+Scrub the preview to a frame and press **Add at frame**. Events on the source clip are imported automatically, and anything you place in the baker wins over them.
+
+```csharp
+animator.ClipEventFired += (a, e) => { if (e.name == "Hit") DealDamage(); };
+animator.ClipFinished   += (a, clip) => { if (clip == "Attack") Recover(); };
+```
+
+For people who would rather not write that, add a **VAT Event Receiver**: it lists the markers in the bake and gives each one a UnityEvent.
+
+![The event track under the preview, with a marker being dragged to a frame](Documentation~/images/events.png)
+
+## Mesh sections
+
+A VAT is frozen - every vertex is where the texture says. A section is the exception: a region that stays drivable afterwards.
+
+Turn **Sections** on in the baker, add one, and pick a bone. The region comes from the rig's own skin weights, so the falloff down a neck is the one the rigger painted. **Highlight** paints it onto the preview and **Test Turn** moves it before you bake anything.
+
+![A head section highlighted on the preview, warm where it is fully owned and cold where it has no hold](Documentation~/images/sections.png)
+
+```csharp
+VATSectionDriver driver = GetComponent<VATSectionDriver>();
+
+driver.TurnTo("Head", new Vector3(0f, 35f, 0f), 0.4f);  // GPU walks the curve, nothing per frame
+driver.LookAt("Head", player.position, 0.4f);
+driver.Track("Head", driver.LookRotation("Head", player.position));  // follows a moving target
+driver.Release("Head", 0.6f);
+```
+
+`Samples/VATSectionSample.cs` is a worked example of all four modes.
+
+## Limits
+
+- **16 clips** per bake, **4 sections** per bake.
+- Vertex count times frame count has to fit a 16384 pixel texture. The window tells you before you bake.
+- Blend shapes bake if they are animated. Cloth, particles and anything else driven outside the animation do not.
+- Sections make the baker write its own copy of the mesh, so Unity 6 Mesh LOD does not survive a bake that uses them.
+
+## More detail
+
+[Documentation~/MiVertexAnimation.md](Documentation~/MiVertexAnimation.md) covers how the data is laid out, how to add VAT to a shader you already have, the memory and precision options, LOD, root motion and the rest.
+
+## License
+
+[MIT](LICENSE.md) (c) André Leandro
