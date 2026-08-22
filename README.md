@@ -4,8 +4,6 @@ Bakes a `SkinnedMeshRenderer` and its `AnimationClip`s into textures, so a crowd
 
 Skinning hundreds of characters costs CPU time you cannot get back, and it is the same work every frame for animation that never changes. This bakes it once. What ships is a mesh, two textures and a material, and every instance plays from the same ones, so a hundred enemies are a hundred instances of one draw call.
 
-![The baker window: source and clips on the left, live preview and event track on the right](Documentation~/images/bakerWindow.png)
-
 ## What you can do
 
 - **Bake several clips at once** into one texture array, each with its own frame range and frame step.
@@ -60,7 +58,6 @@ You get a prefab that plays, and the pieces it is made of:
 
 Drop the prefab in a scene and it animates.
 
-![The baked prefab in a scene, a crowd of instances sharing one draw call](Documentation~/images/crowd.png)
 
 ## Playing clips
 
@@ -85,15 +82,11 @@ animator.ClipFinished   += (a, clip) => { if (clip == "Attack") Recover(); };
 
 For people who would rather not write that, add a **VAT Event Receiver**: it lists the markers in the bake and gives each one a UnityEvent.
 
-![The event track under the preview, with a marker being dragged to a frame](Documentation~/images/events.png)
-
 ## Mesh sections
 
 A VAT is frozen - every vertex is where the texture says. A section is the exception: a region that stays drivable afterwards.
 
 Turn **Sections** on in the baker, add one, and pick a bone. The region comes from the rig's own skin weights, so the falloff down a neck is the one the rigger painted. **Highlight** paints it onto the preview and **Test Turn** moves it before you bake anything.
-
-![A head section highlighted on the preview, warm where it is fully owned and cold where it has no hold](Documentation~/images/sections.png)
 
 ```csharp
 VATSectionDriver driver = GetComponent<VATSectionDriver>();
