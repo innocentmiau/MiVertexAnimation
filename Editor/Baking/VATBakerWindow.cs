@@ -111,6 +111,7 @@ namespace MiVertexAnimation
 
         private bool _createMaterial = true;
         private Shader _materialShader;
+        private bool _restPoseMesh = true;
         private bool _createPrefab = true;
         private bool _frameBlend = true;
         private bool _updateExisting = true;
@@ -456,9 +457,12 @@ namespace MiVertexAnimation
                     if (EditorGUI.EndChangeCheck())
                         _rootIndex = DetectRootIndex(_renderers[Mathf.Clamp(_rendererIndex, 0, _renderers.Length - 1)]);
 
+                    // Nothing here builds an LODGroup. This is how to hand-build one, which is the
+                    // only sense in which this package has anything to do with LOD.
                     EditorGUILayout.HelpBox(
-                        "For an LODGroup, bake each level this way - with identical Start/End Frame, " +
-                        "Frame Step and clip, or the levels pop at LOD transitions.",
+                        "To put a VAT character in an LODGroup, bake each level this way and assemble " +
+                        "the prefabs yourself - with identical Start/End Frame, Frame Step and clip, " +
+                        "or the levels pop as they swap.",
                         MessageType.None);
                 }
                 else if (_rendererMode == VATRendererMode.SEPARATE_PARTS)
@@ -467,8 +471,13 @@ namespace MiVertexAnimation
                     EditorGUILayout.HelpBox(
                         $"{_renderers.Length} renderers, each baked to its own texture pair and material, " +
                         "assembled into one prefab as children.\n" +
-                        "Every part keeps its own base map, and the source meshes keep their Mesh LOD " +
-                        "levels. All parts are sampled from the same frames, so they cannot drift apart.",
+                        "Every part keeps its own base map, and all parts are sampled from the same " +
+                        "frames, so they cannot drift apart." +
+                        (WritesOwnMesh
+                            ? "\nEach part gets a mesh written for it, so the source meshes' Unity 6 " +
+                              "Mesh LOD levels are not carried over."
+                            : "\nThe source meshes are used as they are, so their Unity 6 Mesh LOD " +
+                              "levels are kept."),
                         MessageType.Info);
                 }
                 else
@@ -725,6 +734,16 @@ namespace MiVertexAnimation
                     _materialShader, typeof(Shader), false);
 
                 _frameBlend = EditorGUILayout.Toggle(new GUIContent("Frame Blend", "Smooth playback, at the cost of 4 texture fetches per vertex instead of 2."), _frameBlend);
+                _restPoseMesh = EditorGUILayout.Toggle(
+                    new GUIContent("Bake Rest Pose Mesh",
+                        "Write a mesh holding the first baked frame, instead of pointing the prefab at " +
+                        "the imported one. The shader replaces every vertex anyway, so this only shows " +
+                        "when something else draws it - while a shader variant compiles, or if one " +
+                        "fails - and then it is the character standing still rather than the bind pose " +
+                        "at whatever scale the source file used. Turn it off only to keep Unity 6 Mesh " +
+                        "LOD, which lives on the imported asset and cannot survive a copy."),
+                    _restPoseMesh);
+
                 _createPrefab = EditorGUILayout.Toggle(new GUIContent("Create Prefab", "MeshFilter + MeshRenderer + correct animated bounds."), _createPrefab);
                 EditorGUI.indentLevel--;
 
@@ -2513,6 +2532,7 @@ namespace MiVertexAnimation
                 fileName = _fileName,
                 createMaterial = _createMaterial,
                 materialShader = _materialShader,
+                restPoseMesh = _restPoseMesh,
                 createPrefab = _createPrefab,
                 frameBlend = _frameBlend,
                 updateExisting = _updateExisting,
@@ -2571,6 +2591,7 @@ namespace MiVertexAnimation
             _fileName = state.fileName;
             _createMaterial = state.createMaterial;
             _materialShader = state.materialShader;
+            _restPoseMesh = state.restPoseMesh;
             _createPrefab = state.createPrefab;
             _frameBlend = state.frameBlend;
             _updateExisting = state.updateExisting;
@@ -2725,6 +2746,7 @@ namespace MiVertexAnimation
             _fileName = string.Empty;
             _createMaterial = true;
             _materialShader = null;
+            _restPoseMesh = true;
             _createPrefab = true;
             _frameBlend = true;
             _updateExisting = true;
@@ -2967,6 +2989,7 @@ namespace MiVertexAnimation
             _fileName = settings.fileName;
             _createMaterial = settings.createMaterial;
             _materialShader = settings.materialShader;
+            _restPoseMesh = settings.restPoseMesh;
             _createPrefab = settings.createPrefab;
             _frameBlend = settings.frameBlend;
             _updateExisting = settings.updateExisting;
@@ -3028,6 +3051,7 @@ namespace MiVertexAnimation
             settings.fileName = _fileName;
             settings.createMaterial = _createMaterial;
             settings.materialShader = _materialShader;
+            settings.restPoseMesh = _restPoseMesh;
             settings.createPrefab = _createPrefab;
             settings.frameBlend = _frameBlend;
             settings.updateExisting = _updateExisting;
@@ -3250,16 +3274,26 @@ namespace MiVertexAnimation
 
                 // Built at the rest pose, before any sampling, and in the same renderer order the frame
                 // loop writes in - the shader addresses vertices by index, so the two must agree.
-                if (_rendererMode == VATRendererMode.COMBINED_MESH)
+                /*
+                 * An imported mesh's vertices are in whatever units the file was authored in, and on a
+                 * rig whose bones carry a scale it is the SKINNING that brings them back to metres. A
+                 * VAT prefab has no skinning, and the shader replaces every position from the texture,
+                 * so the mesh being wrong was invisible - right up until something else drew it. Unity's
+                 * placeholder while a variant compiles, an error shader, a fallback on hardware without
+                 * texture arrays: all of them draw the bind pose, at whatever scale the file used.
+                 *
+                 * Writing the rest pose in root space instead means the worst case is a character
+                 * standing still in the right place, rather than a hundred times too big.
+                 */
+                if (WritesOwnMesh)
                 {
-                    Mesh combined = BuildCombinedMesh(instance, parts[0].Targets.ToArray(), baseName);
-                    if (SectionsActive) ApplySectionMask(combined, parts[0]);
+                    foreach (VATPartBake part in parts)
+                    {
+                        Mesh baked = BuildCombinedMesh(instance, part.Targets.ToArray(), part.Name);
+                        if (SectionsActive) ApplySectionMask(baked, part);
 
-                    parts[0].SourceMesh = SaveMesh(combined, baseName);
-                }
-                else if (SectionsActive)
-                {
-                    foreach (VATPartBake part in parts) WriteSectionMesh(part);
+                        part.SourceMesh = SaveMesh(baked, part.Name);
+                    }
                 }
 
                 // Hoisted out of the per-vertex write: compacted normals are stored as 0 to 1 and
@@ -3447,6 +3481,8 @@ namespace MiVertexAnimation
 
                 part.Bounds = new Bounds();
                 part.Bounds.SetMinMax(part.Min, part.Max);
+
+                WarnIfMeshScaleDisagrees(part);
 
                 // A turned section leaves the box the animation was measured in, and Unity would cull
                 // the renderer - and its shadow - against the box that no longer contains it.
@@ -4256,6 +4292,41 @@ namespace MiVertexAnimation
             }
         }
 
+        /*
+         * Combined mode has to merge, sections need somewhere to put their mask, and the rest pose
+         * option is the whole point. Anything else keeps pointing at the imported mesh, which is the
+         * only way Unity 6 Mesh LOD survives a bake.
+         */
+        /*
+         * The signature of a rig whose bones carry a scale: the animation measures one size and the
+         * mesh the prefab carries measures another. Harmless while the VAT shader is running and very
+         * visible the moment it is not, so it is worth saying out loud rather than leaving to be
+         * discovered in a playtest.
+         */
+        private void WarnIfMeshScaleDisagrees(VATPartBake part)
+        {
+            if (WritesOwnMesh || !part.SourceMesh) return;
+
+            float baked = part.Bounds.size.magnitude;
+            float mesh = part.SourceMesh.bounds.size.magnitude;
+
+            if (baked <= .0001f || mesh <= .0001f) return;
+
+            float ratio = Mathf.Max(mesh / baked, baked / mesh);
+            if (ratio < 4f) return;
+
+            Debug.LogWarning($"[VAT] '{part.SourceMesh.name}' is about {ratio:0.#}x the size of the " +
+                             "animation baked from it, because its bones carry a scale that only " +
+                             "skinning applies. Nothing is wrong while the VAT shader is running, but " +
+                             "anything else that draws this prefab - a variant still compiling, a " +
+                             "failed shader - will draw it at that size. Turn on Bake Rest Pose Mesh " +
+                             "to write a correctly placed mesh instead.");
+        }
+
+        /// <summary>Whether this bake writes its own mesh rather than reusing the imported one.</summary>
+        private bool WritesOwnMesh => _rendererMode == VATRendererMode.COMBINED_MESH
+                                      || SectionsActive || _restPoseMesh;
+
         /// <summary>True when this bake has at least one section to write.</summary>
         private bool SectionsActive => _sectionsEnabled && _sections.Count > 0;
 
@@ -4970,25 +5041,6 @@ namespace MiVertexAnimation
             mesh.SetUVs(3, masks);
             part.SectionMasks = masks.ToArray();
             Debug.Log($"[VAT] Section mask on '{part.Name}': {affected}/{masks.Count} vertices affected");
-        }
-
-        /*
-         * Sections need a mesh this baker owns, because the mask goes into a vertex channel and an
-         * imported FBX is not ours to write to. Copying the whole mesh rather than rebuilding it keeps
-         * colours, tangents, every other UV channel and the submesh layout intact, and Instantiate
-         * preserves vertex order - which is what SV_VertexID indexes the baked textures by.
-         *
-         * The cost is Unity 6 Mesh LOD, which lives on the imported asset and does not survive the copy.
-         * That is why this only happens when a bake actually has sections.
-         */
-        /// <summary>Replaces a part's mesh with an owned copy carrying the section mask.</summary>
-        private void WriteSectionMesh(VATPartBake part)
-        {
-            if (!part.SourceMesh) return;
-
-            Mesh copy = Object.Instantiate(part.SourceMesh);
-            ApplySectionMask(copy, part);
-            part.SourceMesh = SaveMesh(copy, part.Name);
         }
 
         /// <summary>What goes into the clip set so scripts can address sections by name.</summary>

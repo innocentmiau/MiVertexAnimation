@@ -70,6 +70,7 @@ namespace MiVertexAnimation
         public string fileName = string.Empty;
         public bool createMaterial = true;
         public Shader materialShader;
+        public bool restPoseMesh = true;
         public bool createPrefab = true;
         public bool frameBlend = true;
         public bool updateExisting = true;

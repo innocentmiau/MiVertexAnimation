@@ -5,6 +5,13 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Bake Rest Pose Mesh**, on by default. Writes a mesh holding the first baked frame instead of pointing the prefab at the imported one, so a shader that is still compiling or has failed draws the character standing still rather than the bind pose at whatever scale the source file used. Turn it off to keep Unity 6 Mesh LOD, which lives on the imported asset.
+- A bake-time warning when the imported mesh and the animation baked from it disagree on scale, which is what a rig with scaled bones looks like from the outside.
+
 ## [1.1.0]
 
 ### Added

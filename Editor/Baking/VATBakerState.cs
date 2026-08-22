@@ -61,6 +61,7 @@ namespace MiVertexAnimation
         public string fileName;
         public bool createMaterial;
         public Shader materialShader;
+        public bool restPoseMesh;
         public bool createPrefab;
         public bool frameBlend;
         public bool updateExisting;
@@ -115,6 +116,7 @@ namespace MiVertexAnimation
                               && fileName == other.fileName
                               && createMaterial == other.createMaterial
                               && materialShader == other.materialShader
+                              && restPoseMesh == other.restPoseMesh
                               && createPrefab == other.createPrefab
                               && frameBlend == other.frameBlend
                               && updateExisting == other.updateExisting
