@@ -4,6 +4,8 @@ Bakes a `SkinnedMeshRenderer` and its `AnimationClip`s into textures, so a crowd
 
 Skinning hundreds of characters costs CPU time you cannot get back, and it is the same work every frame for animation that never changes. This bakes it once. What ships is a mesh, two textures and a material, and every instance plays from the same ones, so a hundred enemies are a hundred instances of one draw call.
 
+![The baker window: source and clips on the left, live preview and event track on the right](Documentation~/images/bakerWindow.png)
+
 ## What you can do
 
 - **Bake several clips at once** into one texture array, each with its own frame range and frame step.
