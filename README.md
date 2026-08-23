@@ -11,6 +11,20 @@ Skinning hundreds of characters costs CPU time you cannot get back, and it is th
 > baker window, the runtime components and the shaders. The **Demo** sample adds a CC0 character and
 > an idle clip, so there is something to bake on the first run.
 
+## Contents
+
+- [What you can do](#what-you-can-do) |Tthe short list of features
+- [Requirements](#requirements) | Unity and render pipeline versions
+- [Installation](#installation) | Adding the package
+- [Baking](#baking) | The baker window, start to finish
+- [Playing clips](#playing-clips) | Driving a baked prefab from code
+- [Events](#events) | Markers on a baked clip, and reacting to them
+- [Mesh sections](#mesh-sections) | Keeping part of the mesh drivable after the bake
+- [Limits](#limits) | What it will not do
+- [Roadmap](#roadmap) | What may come next
+- [More detail](#more-detail) | Data layout, custom shaders, LOD, root motion
+- [License](#license) | MIT, and the one asset that is not
+
 ## What you can do
 
 - **Bake several clips at once** into one texture array, each with its own frame range and frame step.
@@ -127,6 +141,25 @@ drop the prefab onto the rig in the scene. Its own README has the four steps.
 - Blend shapes bake if they are animated. Cloth, particles and anything else driven outside the animation do not.
 - Sections make the baker write its own copy of the mesh, so Unity 6 Mesh LOD does not survive a bake that uses them.
 
+## Roadmap
+
+Nothing here is promised or scheduled, it is what seems worth building next, roughly in order of how useful it would be. Suggestions and issues are welcome, and will move things around.
+
+**Sections**
+
+- **Chained sections.** A spine that drives a head that drives the eyes. Sections are independent today: where two overlap, priority decides which one owns a vertex, and neither inherits the other's rotation.
+- **A warning when two baked clips share a name.** Clips are addressed by name at runtime, so two slices both called `Idle` cannot both be reached, and a one-shot ending on the second will not return to what it interrupted. The baker should say so before the bake rather than after.
+
+**Baking**
+
+- **Batch re-bake.** Every bake writes a settings asset next to its output, which is enough to reproduce it exactly, but nothing yet walks a folder of them after a shader change or a precision change and re-runs the lot.
+- **Feedback when a bake finishes.** Right now the Project window does not move. Selecting and pinging what was written would say more than the console line does.
+- **Preflight checks** gathered into one place, instead of warnings appearing as you happen to scroll past the setting that caused them.
+
+**Rendering**
+
+- **Alpha-clipped materials in the right queue.** The shader has an Alpha Clip toggle, but the passes stay tagged Opaque and Geometry, so cutout foliage or a cape sorts against other cutouts wrong.
+
 ## More detail
 
 [Documentation~/MiVertexAnimation.md](Documentation~/MiVertexAnimation.md) covers how the data is laid out, how to add VAT to a shader you already have, the memory and precision options, LOD, root motion and the rest.
@@ -135,8 +168,4 @@ drop the prefab onto the rig in the scene. Its own README has the four steps.
 
 [MIT](LICENSE.md) (c) André Leandro
 
-The **Demo** sample includes a character from the [KayKit Character Pack](https://kaylousberg.com) by
-Kay Lousberg, released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) and
-redistributable on those terms. It is the only asset here not covered by the MIT license above, and it
-is recorded in `Samples~/Demo/Source/THIRD-PARTY.md`. Characters shown in the screenshots are not
-distributed with the package at all.
+The **Demo** sample includes a character from the [KayKit Character Pack](https://kaylousberg.com) by Kay Lousberg, released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) and redistributable on those terms. It is the only asset here not covered by the MIT license above, and it is recorded in `Samples~/Demo/Source/THIRD-PARTY.md`. Characters shown in the screenshots are not distributed with the package at all.
