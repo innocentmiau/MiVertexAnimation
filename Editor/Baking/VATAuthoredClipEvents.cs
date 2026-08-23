@@ -14,6 +14,9 @@ namespace MiVertexAnimation
      * The start frame is recorded alongside because event times are normalized.
      * Changing Frame Step keeps every marker on the same moment, but changing Start Frame slides the
      * animation underneath them, and there is no way to correct for that after the fact - only to warn.
+     *
+     * Keyed by clip reference for the same reason VATClipRange is: two clips called "Idle" shared one
+     * list, so markers authored on either showed on both and saving one wrote over the other's slice.
      */
     /// <summary>
     /// One clip's hand-authored event list inside the VAT Baker, and whether it overrides the source.
@@ -22,7 +25,10 @@ namespace MiVertexAnimation
     public class VATAuthoredClipEvents
     {
 
-        [Tooltip("Name of the source AnimationClip these events belong to.")]
+        [Tooltip("The source AnimationClip these events belong to.")]
+        public AnimationClip clip;
+
+        [Tooltip("Display label only. Two clips can share a name, so the reference above is the key.")]
         public string clipName;
 
         [Tooltip("True once the list was edited in the baker, which makes it win over the source clip.")]

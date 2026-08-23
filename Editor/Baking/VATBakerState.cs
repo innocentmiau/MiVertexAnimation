@@ -178,7 +178,7 @@ namespace MiVertexAnimation
                 VATClipRange mine = clipRanges[i];
                 VATClipRange theirs = other.clipRanges[i];
 
-                if (mine.clipName != theirs.clipName) return false;
+                if (mine.clip != theirs.clip || mine.clipName != theirs.clipName) return false;
                 if (mine.startFrame != theirs.startFrame || mine.endFrame != theirs.endFrame) return false;
                 if (mine.frameStep != theirs.frameStep || mine.trimLoopFrame != theirs.trimLoopFrame) return false;
             }
@@ -195,7 +195,8 @@ namespace MiVertexAnimation
                 VATAuthoredClipEvents mine = authoredEvents[i];
                 VATAuthoredClipEvents theirs = other.authoredEvents[i];
 
-                if (mine.clipName != theirs.clipName || mine.authored != theirs.authored) return false;
+                if (mine.clip != theirs.clip || mine.clipName != theirs.clipName) return false;
+                if (mine.authored != theirs.authored) return false;
                 if (mine.authoredStartFrame != theirs.authoredStartFrame) return false;
                 if (mine.events.Count != theirs.events.Count) return false;
 

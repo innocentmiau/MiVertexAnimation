@@ -5,6 +5,12 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Two clips with the same name no longer share one entry in the baker. Frame ranges and authored events were keyed by clip name, so an `Idle` from one FBX and an `Idle` from another looked like the same clip: editing one range edited both, opening the shorter one clamped the longer one's End Frame down to its length, markers placed on either appeared on both, and **Save Events** wrote one clip's markers over the other's slice in the baked clip set. Both are keyed by clip reference now, and the name is only a label. This also means renaming a clip keeps its range and its events instead of silently orphaning them. Settings assets written before this adopt their clips on load, so nothing needs re-authoring.
+
 ## [1.2.0]
 
 ### Added

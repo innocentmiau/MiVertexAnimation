@@ -1628,7 +1628,7 @@ namespace MiVertexAnimation
                 return;
             }
 
-            int slice = set.IndexOf(clip.name);
+            int slice = SliceFor(set, clip, bakeClips);
             if (slice < 0)
             {
                 EditorGUILayout.HelpBox(
@@ -1651,6 +1651,26 @@ namespace MiVertexAnimation
             Debug.Log($"[VAT] Saved {entry.events.Count} event(s) for '{clip.name}' into {path}");
         }
 
+        /*
+         * Slices are written in bake order, so when the set on disk still lines up with the bake list the
+         * clip's position is the answer, and two clips sharing a name still land in their own slice.
+         * Reordering the list without re-baking breaks that alignment, and then the name is all there is.
+         */
+        /// <summary>
+        /// Which slice of a baked clip set a clip's events belong in.
+        /// </summary>
+        /// <param name="set">The clip set being written to.</param>
+        /// <param name="clip">The clip whose events are being saved.</param>
+        /// <param name="bakeClips">The current bake set, whose order the slices were written in.</param>
+        /// <returns>The slice index, or -1 when that clip is not in the set.</returns>
+        private static int SliceFor(VATClipSet set, AnimationClip clip, List<AnimationClip> bakeClips)
+        {
+            int position = bakeClips.IndexOf(clip);
+            if (position >= 0 && position < set.Count && set.NameAt(position) == clip.name) return position;
+
+            return set.IndexOf(clip.name);
+        }
+
         /// <summary>
         /// The clip's working event list, seeded the first time it is looked at.
         /// </summary>
@@ -1660,11 +1680,17 @@ namespace MiVertexAnimation
         /// <returns>The entry for this clip, created and seeded if it did not exist.</returns>
         private VATAuthoredClipEvents EventsFor(AnimationClip clip, List<AnimationClip> bakeClips, int frames)
         {
-            VATAuthoredClipEvents existing = FindAuthored(clip.name);
-            if (existing != null) return existing;
+            VATAuthoredClipEvents existing = FindAuthored(clip);
+
+            if (existing != null)
+            {
+                existing.clipName = clip.name;
+                return existing;
+            }
 
             VATAuthoredClipEvents entry = new VATAuthoredClipEvents
             {
+                clip = clip,
                 clipName = clip.name,
                 authoredStartFrame = _startFrame
             };
@@ -1672,7 +1698,7 @@ namespace MiVertexAnimation
             // The baked clip set is the live runtime data, so it wins over the source clip when there
             // is one. Before any bake there is nothing but the source clip to go on.
             VATClipSet set = AssetDatabase.LoadAssetAtPath<VATClipSet>(ClipSetPath(bakeClips));
-            VATClipEvent[] baked = set ? set.EventsAt(set.IndexOf(clip.name)) : null;
+            VATClipEvent[] baked = set ? set.EventsAt(SliceFor(set, clip, bakeClips)) : null;
 
             if (baked?.Length > 0) entry.events.AddRange(baked);
             else entry.events.AddRange(ImportSourceEvents(clip, _startFrame, BakedLength(clip, frames)));
@@ -1691,12 +1717,28 @@ namespace MiVertexAnimation
             MarkEdited();
         }
 
-        private VATAuthoredClipEvents FindAuthored(string clipName)
+        /*
+         * Keyed by reference for the same reason ranges are: two clips called "Idle" used to share one
+         * event list, and saving one of them wrote its markers over the other's slice. Legacy entries
+         * hold only a name, so the first name match adopts the clip.
+         */
+        /// <summary>
+        /// The stored event list for a clip, if there is one.
+        /// </summary>
+        /// <param name="clip">The clip to look up.</param>
+        /// <returns>Its entry, or null when nothing has been authored or imported for it yet.</returns>
+        private VATAuthoredClipEvents FindAuthored(AnimationClip clip)
         {
-            foreach (VATAuthoredClipEvents entry in _authoredEvents)
-                if (entry.clipName == clipName) return entry;
+            VATAuthoredClipEvents legacy = null;
 
-            return null;
+            foreach (VATAuthoredClipEvents entry in _authoredEvents)
+            {
+                if (entry.clip && entry.clip == clip) return entry;
+                if (!entry.clip && legacy == null && entry.clipName == clip.name) legacy = entry;
+            }
+
+            if (legacy != null) legacy.clip = clip;
+            return legacy;
         }
 
         private void MarkAuthored(VATAuthoredClipEvents entry)
@@ -1801,6 +1843,7 @@ namespace MiVertexAnimation
             {
                 copy.Add(new VATAuthoredClipEvents
                 {
+                    clip = entry.clip,
                     clipName = entry.clipName,
                     authored = entry.authored,
                     authoredStartFrame = entry.authoredStartFrame,
@@ -3121,35 +3164,64 @@ namespace MiVertexAnimation
         /// <summary>
         /// One clip's stored range, created on first sight and clamped to what the clip actually holds.
         /// </summary>
-        /// <param name="clip">The clip to look up, matched by name.</param>
+        /// <param name="clip">The clip to look up, matched by reference.</param>
         /// <returns>The stored range, which the caller may write to directly.</returns>
         private VATClipRange RangeFor(AnimationClip clip)
         {
             int frames = FrameCount(clip);
+            VATClipRange range = FindRange(clip);
+
+            if (range == null)
+            {
+                range = new VATClipRange
+                {
+                    clip = clip,
+                    clipName = clip.name,
+                    startFrame = 0,
+                    endFrame = frames,
+                    frameStep = Mathf.Clamp(_frameStep, 1, 10),
+                    trimLoopFrame = _trimLoopFrame
+                };
+
+                _clipRanges.Add(range);
+                return range;
+            }
+
+            // The name is a label rather than the key, so renaming the clip renames its tab
+            // instead of orphaning everything set on it.
+            range.clipName = clip.name;
+
+            // A re-imported clip can be shorter than it was when the range was set, which would
+            // otherwise leave the sliders pointing past the end and bake frames that do not exist.
+            range.endFrame = Mathf.Clamp(range.endFrame, 1, frames);
+            range.startFrame = Mathf.Clamp(range.startFrame, 0, range.endFrame - 1);
+            range.frameStep = Mathf.Clamp(range.frameStep, 1, 10);
+            return range;
+        }
+
+        /*
+         * Ranges used to be keyed by name, which made two clips called "Idle" share one entry: editing
+         * either edited both, and the clamp above shrank the long one to the short one's length without
+         * saying so. Settings assets written before the reference existed carry only the name, so the
+         * first name match adopts the clip - the same clip the old lookup would have picked.
+         */
+        /// <summary>
+        /// The stored range for a clip, if there is one.
+        /// </summary>
+        /// <param name="clip">The clip to look up.</param>
+        /// <returns>Its range, or null when nothing is stored for it yet.</returns>
+        private VATClipRange FindRange(AnimationClip clip)
+        {
+            VATClipRange legacy = null;
 
             foreach (VATClipRange existing in _clipRanges)
             {
-                if (existing.clipName != clip.name) continue;
-
-                // A re-imported clip can be shorter than it was when the range was set, which would
-                // otherwise leave the sliders pointing past the end and bake frames that do not exist.
-                existing.endFrame = Mathf.Clamp(existing.endFrame, 1, frames);
-                existing.startFrame = Mathf.Clamp(existing.startFrame, 0, existing.endFrame - 1);
-                existing.frameStep = Mathf.Clamp(existing.frameStep, 1, 10);
-                return existing;
+                if (existing.clip && existing.clip == clip) return existing;
+                if (!existing.clip && legacy == null && existing.clipName == clip.name) legacy = existing;
             }
 
-            VATClipRange range = new VATClipRange
-            {
-                clipName = clip.name,
-                startFrame = 0,
-                endFrame = frames,
-                frameStep = Mathf.Clamp(_frameStep, 1, 10),
-                trimLoopFrame = _trimLoopFrame
-            };
-
-            _clipRanges.Add(range);
-            return range;
+            if (legacy != null) legacy.clip = clip;
+            return legacy;
         }
 
         /*
@@ -3170,6 +3242,7 @@ namespace MiVertexAnimation
             bool singleClip = clipCount == 1;
             return new VATClipRange
             {
+                clip = clip,
                 clipName = clip.name,
                 startFrame = singleClip ? _startFrame : 0,
                 endFrame = singleClip ? _endFrame : FrameCount(clip),
@@ -3187,6 +3260,7 @@ namespace MiVertexAnimation
             {
                 copy.Add(new VATClipRange
                 {
+                    clip = range.clip,
                     clipName = range.clipName,
                     startFrame = range.startFrame,
                     endFrame = range.endFrame,
@@ -3702,7 +3776,7 @@ namespace MiVertexAnimation
             }
 
             VATClipEntry[] previous = set.clips;
-            set.clips = clips.Select(c =>
+            set.clips = clips.Select((c, slice) =>
             {
                 float length = c.Frames / Mathf.Max(c.Rate, .0001f);
                 return new VATClipEntry
@@ -3711,7 +3785,7 @@ namespace MiVertexAnimation
                     frames = c.Frames,
                     frameRate = c.Rate,
                     length = length,
-                    events = ImportEvents(c, length, previous)
+                    events = ImportEvents(c, length, previous, slice)
                 };
             }).ToArray();
 
@@ -3742,14 +3816,25 @@ namespace MiVertexAnimation
         /// <param name="bake">The clip's slice, which carries the frame range that was baked.</param>
         /// <param name="bakedLength">Seconds the baked slice runs for, used to normalize event times.</param>
         /// <param name="previous">Entries from the clip set being updated, or null when creating one.</param>
+        /// <param name="slice">This clip's slice, used to carry events forward from the same slot.</param>
         /// <returns>The events for this slice, never null.</returns>
-        private VATClipEvent[] ImportEvents(VATClipBake bake, float bakedLength, VATClipEntry[] previous)
+        private VATClipEvent[] ImportEvents(VATClipBake bake, float bakedLength, VATClipEntry[] previous,
+                                            int slice)
         {
-            VATAuthoredClipEvents authored = FindAuthored(bake.Clip.name);
+            VATAuthoredClipEvents authored = FindAuthored(bake.Clip);
             if (authored != null && authored.authored) return authored.events.ToArray();
 
             VATClipEvent[] imported = ImportSourceEvents(bake.Clip, bake.StartFrame, bakedLength);
             if (imported.Length > 0 || previous == null) return imported;
+
+            // The slot this clip already occupied, when the set being updated still lines up with this
+            // bake. Two clips of the same name each keep their own events instead of both taking the
+            // first one's. Once the list has been reordered the name is all there is to go on.
+            if (slice >= 0 && slice < previous.Length && previous[slice].name == bake.Clip.name &&
+                previous[slice].events != null)
+            {
+                return previous[slice].events;
+            }
 
             foreach (VATClipEntry entry in previous)
                 if (entry.name == bake.Clip.name && entry.events != null) return entry.events;

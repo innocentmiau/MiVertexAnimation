@@ -13,6 +13,9 @@ namespace MiVertexAnimation
      * that everything else is padding up to, which is why this is worth having per clip rather than once
      * for the whole bake. The shader already supports it: _VATClipData stores frames and rate per clip,
      * so every slice can run at its own length and its own speed with no change to the sampling at all.
+     *
+     * Keyed by clip reference, not by name. Two FBX files can each export an "Idle", and a name key made
+     * them share one of these: editing either edited both, and a rename orphaned the lot.
      */
     /// <summary>
     /// How much of one clip gets baked, and at what resolution.
@@ -21,7 +24,10 @@ namespace MiVertexAnimation
     public class VATClipRange
     {
 
-        [Tooltip("Name of the source AnimationClip these numbers belong to.")]
+        [Tooltip("The source AnimationClip these numbers belong to.")]
+        public AnimationClip clip;
+
+        [Tooltip("Display label only. Two clips can share a name, so the reference above is the key.")]
         public string clipName;
 
         [Tooltip("First source frame to bake.")]
