@@ -19,6 +19,10 @@ namespace MiVertexAnimation
         public readonly List<SkinnedMeshRenderer> Targets = new List<SkinnedMeshRenderer>();
         public Mesh SourceMesh;
 
+        // One per LOD Group level, each the full vertex buffer with a single level's triangles.
+        // Null when this bake is not writing a group.
+        public Mesh[] LodMeshes;
+
         // One name per submesh, in the order BuildCombinedMesh emits them, so the generated
         // materials can be told apart at a glance.
         public readonly List<string> SlotNames = new List<string>();

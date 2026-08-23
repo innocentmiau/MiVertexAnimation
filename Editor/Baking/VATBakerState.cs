@@ -61,6 +61,8 @@ namespace MiVertexAnimation
         public string fileName;
         public bool createMaterial;
         public Shader materialShader;
+        public bool lodGroup;
+        public List<VATLodLevel> lodLevels = new List<VATLodLevel>();
         public bool restPoseMesh;
         public bool createPrefab;
         public bool frameBlend;
@@ -97,6 +99,7 @@ namespace MiVertexAnimation
             if (!RangesMatch(other)) return false;
             if (sectionsEnabled != other.sectionsEnabled) return false;
             if (!SectionsMatch(other)) return false;
+            if (!LodLevelsMatch(other)) return false;
 
             bool sameRoot = removeRootMotion == other.removeRootMotion
                             && rootIndex == other.rootIndex
@@ -130,6 +133,21 @@ namespace MiVertexAnimation
                 if (bakeClips[i] != other.bakeClips[i]) return false;
 
             return EventsMatch(other);
+        }
+
+        private bool LodLevelsMatch(VATBakerState other)
+        {
+            if (lodGroup != other.lodGroup) return false;
+            if (lodLevels.Count != other.lodLevels.Count) return false;
+
+            for (int i = 0; i < lodLevels.Count; i++)
+            {
+                if (lodLevels[i].level != other.lodLevels[i].level) return false;
+                if (!Mathf.Approximately(lodLevels[i].screenPercentage,
+                        other.lodLevels[i].screenPercentage)) return false;
+            }
+
+            return true;
         }
 
         private bool SectionsMatch(VATBakerState other)

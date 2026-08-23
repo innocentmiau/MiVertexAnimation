@@ -36,7 +36,7 @@ namespace MiVertexAnimation
                 keywords = new HashSet<string>(new[]
                 {
                     "vat", "vertex", "animation", "baker", "icons", "colours", "colors",
-                    "preview", "bones", "readable", "memory", "texture"
+                    "preview", "bones", "readable", "memory", "texture", "mesh", "lod", "unused"
                 })
             };
         }
@@ -140,6 +140,22 @@ namespace MiVertexAnimation
 
                 if (GUILayout.Button("Free CPU Copies of Baked Textures", GUILayout.Width(280f)))
                     VATTextureMaintenance.FreeExisting();
+            }
+
+            EditorGUILayout.Space(6f);
+
+            EditorGUILayout.HelpBox(
+                "A bake writes one mesh per LOD level. Dropping a level, or turning the LOD Group " +
+                "section off, leaves the meshes it no longer uses on disk. This finds baked meshes no " +
+                "prefab or scene refers to, lists them, and deletes them only if you say so.",
+                MessageType.None);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.FlexibleSpace();
+
+                if (GUILayout.Button("Find Unused Baked Meshes", GUILayout.Width(280f)))
+                    VATMeshMaintenance.DeleteOrphans();
             }
         }
 

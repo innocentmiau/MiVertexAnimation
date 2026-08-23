@@ -23,7 +23,6 @@ namespace MiVertexAnimation
      * VATAnimator can both live on the same renderer without either wiping the other's state.
      */
     /// <summary>Turns and moves the baked sections on one VAT renderer.</summary>
-    [RequireComponent(typeof(Renderer))]
     [DisallowMultipleComponent]
     [ExecuteAlways]
     public class VATSectionDriver : MonoBehaviour
@@ -40,7 +39,9 @@ namespace MiVertexAnimation
         [Tooltip("The clip set the baker generated. Supplies section names and their Max Angle limits.")]
         private VATClipSet clipSet;
 
-        private Renderer _renderer;
+        // Every renderer underneath, for the same reason VATAnimator does it: an LOD Group bake has
+        // one per level and the group enables one at a time.
+        private Renderer[] _renderers;
         private MaterialPropertyBlock _block;
         private VATSectionState[] _states;
         private bool _tracking;
@@ -78,7 +79,7 @@ namespace MiVertexAnimation
 
         private void OnEnable()
         {
-            _renderer = GetComponent<Renderer>();
+            _renderers = GetComponentsInChildren<Renderer>(true);
             if (!clipSet) clipSet = FindClipSet();
 
             _states = new VATSectionState[MAX_SECTIONS];
@@ -341,27 +342,34 @@ namespace MiVertexAnimation
          */
         private void Push()
         {
-            if (!_renderer) _renderer = GetComponent<Renderer>();
-            if (!_renderer || _states == null) return;
+            if (_renderers == null || _renderers.Length == 0)
+                _renderers = GetComponentsInChildren<Renderer>(true);
 
+            if (_renderers.Length == 0 || _states == null) return;
             if (_block == null) _block = new MaterialPropertyBlock();
-            _renderer.GetPropertyBlock(_block);
 
-            for (int i = 0; i < MAX_SECTIONS; i++)
+            foreach (Renderer renderer in _renderers)
             {
-                VATSectionState state = _states[i];
+                if (!renderer) continue;
 
-                _block.SetVector(FROM_ROTATION_IDS[i], AsVector(state.FromRotation));
-                _block.SetVector(TO_ROTATION_IDS[i], AsVector(state.ToRotation));
+                renderer.GetPropertyBlock(_block);
 
-                // The timing rides in the w of the offsets, which the shader unpacks the same way.
-                _block.SetVector(FROM_OFFSET_IDS[i], new Vector4(
-                    state.FromOffset.x, state.FromOffset.y, state.FromOffset.z, state.StartTime));
-                _block.SetVector(TO_OFFSET_IDS[i], new Vector4(
-                    state.ToOffset.x, state.ToOffset.y, state.ToOffset.z, state.Duration));
+                for (int i = 0; i < MAX_SECTIONS; i++)
+                {
+                    VATSectionState state = _states[i];
+
+                    _block.SetVector(FROM_ROTATION_IDS[i], AsVector(state.FromRotation));
+                    _block.SetVector(TO_ROTATION_IDS[i], AsVector(state.ToRotation));
+
+                    // The timing rides in the w of the offsets, which the shader unpacks the same way.
+                    _block.SetVector(FROM_OFFSET_IDS[i], new Vector4(
+                        state.FromOffset.x, state.FromOffset.y, state.FromOffset.z, state.StartTime));
+                    _block.SetVector(TO_OFFSET_IDS[i], new Vector4(
+                        state.ToOffset.x, state.ToOffset.y, state.ToOffset.z, state.Duration));
+                }
+
+                renderer.SetPropertyBlock(_block);
             }
-
-            _renderer.SetPropertyBlock(_block);
         }
 
         private static Vector4 AsVector(Quaternion q) => new Vector4(q.x, q.y, q.z, q.w);

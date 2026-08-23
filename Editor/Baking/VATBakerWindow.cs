@@ -111,6 +111,8 @@ namespace MiVertexAnimation
 
         private bool _createMaterial = true;
         private Shader _materialShader;
+        private bool _lodGroup;
+        private List<VATLodLevel> _lodLevels = new List<VATLodLevel>();
         private bool _restPoseMesh = true;
         private bool _createPrefab = true;
         private bool _frameBlend = true;
@@ -175,6 +177,7 @@ namespace MiVertexAnimation
 
         // Index into _sections, or -1 for none. View state, so it is not worth an undo step.
         [System.NonSerialized] private bool _showBakeSettings;
+        [System.NonSerialized] private int _previewLod = -1;
         [System.NonSerialized] private int _highlightSection = -1;
         [System.NonSerialized] private readonly HashSet<int> _expandedSections = new HashSet<int>();
         [System.NonSerialized] private Material _maskMaterial;
@@ -483,8 +486,8 @@ namespace MiVertexAnimation
                     EditorGUILayout.HelpBox(
                         $"{_renderers.Length} renderers merged into a single mesh asset and one texture pair, " +
                         "with one material generated per submesh so each part keeps its own base map.\n" +
-                        "Cheapest in memory, but the generated mesh does NOT carry the source meshes' " +
-                        "Mesh LOD levels.",
+                        "Cheapest in memory. The merged mesh has no Mesh LOD levels of its own, but the " +
+                        "LOD Group section still works: it merges each level as it merges the mesh.",
                         MessageType.Info);
                 }
             }
@@ -510,6 +513,8 @@ namespace MiVertexAnimation
             }
 
             VATUi.EndSection();
+
+            DrawLodGroupSettings(renderer);
 
             VATUi.BeginSection("Animation", VATIcons.ForType(typeof(AnimationClip)));
 
@@ -2058,7 +2063,8 @@ namespace MiVertexAnimation
                 new Rect(rect.x, rect.yMax - 20f, rect.width, 16f),
                 $"frame {frameIndex + 1}/{frameCount}   step {_frameStep}   {bakedFrameRate:0.##} fps" +
                 (_frameBlend ? $"   blend {blend:0.00}" : "   no blend") +
-                (_bakeNormals ? string.Empty : "   bind-pose normals"));
+                (_bakeNormals ? string.Empty : "   bind-pose normals") +
+                (_previewLod >= 0 && LodGroupActive ? $"   LOD {_previewLod}" : string.Empty));
         }
 
         /*
@@ -2348,10 +2354,26 @@ namespace MiVertexAnimation
                 : UnityEngine.Rendering.IndexFormat.UInt16;
             part.Display.vertices = vertices;
             part.Display.uv = _previewScratch.uv;
-            part.Display.subMeshCount = _previewScratch.subMeshCount;
 
-            for (int sm = 0; sm < _previewScratch.subMeshCount; sm++)
-                part.Display.SetTriangles(_previewScratch.GetTriangles(sm), sm);
+            /*
+             * Triangles come from the SOURCE mesh when a level is being previewed, because that is where
+             * the Mesh LOD levels live - BakeMesh returns a pose, not a level. Vertex order is the same
+             * in both, so a level's indices address these vertices exactly as they address the source's,
+             * which is the same reason the bake can cut a level out at all.
+             */
+            Mesh topology = _previewScratch;
+            int level = PreviewedLevel(part.Source);
+
+            if (level >= 0 && part.Source && part.Source.sharedMesh) topology = part.Source.sharedMesh;
+
+            part.Display.subMeshCount = topology.subMeshCount;
+
+            for (int sm = 0; sm < topology.subMeshCount; sm++)
+            {
+                part.Display.SetTriangles(level >= 0
+                    ? topology.GetIndices(sm, level)
+                    : topology.GetTriangles(sm), sm);
+            }
 
             part.TopologyReady = true;
         }
@@ -2529,6 +2551,8 @@ namespace MiVertexAnimation
                 fileName = _fileName,
                 createMaterial = _createMaterial,
                 materialShader = _materialShader,
+                lodGroup = _lodGroup,
+                lodLevels = CloneLodLevels(_lodLevels),
                 restPoseMesh = _restPoseMesh,
                 createPrefab = _createPrefab,
                 frameBlend = _frameBlend,
@@ -2588,6 +2612,8 @@ namespace MiVertexAnimation
             _fileName = state.fileName;
             _createMaterial = state.createMaterial;
             _materialShader = state.materialShader;
+            _lodGroup = state.lodGroup;
+            _lodLevels = CloneLodLevels(state.lodLevels);
             _restPoseMesh = state.restPoseMesh;
             _createPrefab = state.createPrefab;
             _frameBlend = state.frameBlend;
@@ -2743,6 +2769,9 @@ namespace MiVertexAnimation
             _fileName = string.Empty;
             _createMaterial = true;
             _materialShader = null;
+            _lodGroup = false;
+            _lodLevels.Clear();
+            _previewLod = -1;
             _restPoseMesh = true;
             _createPrefab = true;
             _frameBlend = true;
@@ -2986,6 +3015,8 @@ namespace MiVertexAnimation
             _fileName = settings.fileName;
             _createMaterial = settings.createMaterial;
             _materialShader = settings.materialShader;
+            _lodGroup = settings.lodGroup;
+            _lodLevels = CloneLodLevels(settings.lodLevels);
             _restPoseMesh = settings.restPoseMesh;
             _createPrefab = settings.createPrefab;
             _frameBlend = settings.frameBlend;
@@ -3048,6 +3079,8 @@ namespace MiVertexAnimation
             settings.fileName = _fileName;
             settings.createMaterial = _createMaterial;
             settings.materialShader = _materialShader;
+            settings.lodGroup = _lodGroup;
+            settings.lodLevels = CloneLodLevels(_lodLevels);
             settings.restPoseMesh = _restPoseMesh;
             settings.createPrefab = _createPrefab;
             settings.frameBlend = _frameBlend;
@@ -3296,6 +3329,8 @@ namespace MiVertexAnimation
 
                         ReportMeshLods(part, baked);
                         part.SourceMesh = SaveMesh(baked, part.Name);
+
+                        if (LodGroupActive) part.LodMeshes = SaveLodMeshes(instance, part, baked);
                     }
                 }
 
@@ -3899,7 +3934,8 @@ namespace MiVertexAnimation
             if (normalized) material.EnableKeyword("_VAT_POSNORM");
             else material.DisableKeyword("_VAT_POSNORM");
 
-            // Per-instance clip state travels in the instancing buffer.
+            // Per-instance clip state travels in the instancing buffer. Anyone who wants it off can
+            // untick it on the material; a bake setting for it only ever meant losing all batching.
             material.enableInstancing = true;
 
             if (updating) EditorUtility.SetDirty(material);
@@ -3920,7 +3956,7 @@ namespace MiVertexAnimation
                 GameObject contents = PrefabUtility.LoadPrefabContents(path);
                 try
                 {
-                    PopulatePrefab(contents, baseName, parts, clipSet);
+                    PopulatePrefab(contents, baseName, parts, clipSet, LodScreenPercentages());
                     PrefabUtility.SaveAsPrefabAsset(contents, path);
                 }
                 finally
@@ -3937,7 +3973,7 @@ namespace MiVertexAnimation
             GameObject go = new GameObject(baseName);
             try
             {
-                PopulatePrefab(go, baseName, parts, clipSet);
+                PopulatePrefab(go, baseName, parts, clipSet, LodScreenPercentages());
                 PrefabUtility.SaveAsPrefabAsset(go, path);
                 Debug.Log($"[VAT] Created prefab {path}");
             }
@@ -3947,8 +3983,163 @@ namespace MiVertexAnimation
             }
         }
 
-        private static void PopulatePrefab(GameObject root, string baseName, List<VATPartBake> parts, VATClipSet clipSet)
+        /*
+         * A triangle count says nothing about where a silhouette gives out, so a level can be put on the
+         * preview and scrubbed like anything else. Only ever one at a time: the point is to compare it
+         * against what the animation is doing, not against another level.
+         */
+        /// <summary>Source LOD level to draw the preview with, or -1 to draw it whole.</summary>
+        private int PreviewedLevel(SkinnedMeshRenderer source)
         {
+            if (!LodGroupActive || _previewLod < 0 || _previewLod >= _lodLevels.Count) return -1;
+
+            Mesh mesh = source ? source.sharedMesh : null;
+            if (!mesh || mesh.lodCount <= 1) return -1;
+
+            return Mathf.Clamp(_lodLevels[_previewLod].level, 0, mesh.lodCount - 1);
+        }
+
+        /// <summary>Drops the preview topology so the next repaint rebuilds it at the chosen level.</summary>
+        private void InvalidatePreviewTopology()
+        {
+            foreach (VATPreviewPart part in _previewParts) part.TopologyReady = false;
+
+            Repaint();
+        }
+
+        /*
+         * The distance a threshold lands at, which is the number anyone actually reasons about. A
+         * fraction of screen height on its own says nothing: half of screen height sounds like a
+         * reasonable first step and is a two metre character standing three metres away.
+         */
+        private float LodDistance(SkinnedMeshRenderer renderer, float screenPercentage)
+        {
+            if (screenPercentage <= 0f) return 0f;
+
+            Bounds bounds = renderer && renderer.sharedMesh ? renderer.sharedMesh.bounds : default;
+            float size = Mathf.Max(bounds.size.x, Mathf.Max(bounds.size.y, bounds.size.z));
+
+            if (size <= 0f) size = 1f;
+
+            // Screen height fraction = size / (2 * distance * tan(fov / 2)), rearranged for distance.
+            return size / (2f * screenPercentage * Mathf.Tan(30f * Mathf.Deg2Rad));
+        }
+
+        /*
+         * Maximum LOD Level is the BEST level a quality setting allows, and LOD 0 is the best there is,
+         * so a value above 0 forbids the levels above it on every object in the project. Set higher than
+         * a group has levels, nothing qualifies - and Unity draws nothing rather than falling back to the
+         * coarsest one it does have. Silent, project wide, and identical on a hand built LODGroup, which
+         * is exactly the kind of thing worth catching from inside the tool.
+         */
+        private void WarnAboutMaximumLodLevel()
+        {
+            int maximum = QualitySettings.maximumLODLevel;
+            if (maximum < _lodLevels.Count) return;
+
+            EditorGUILayout.HelpBox(
+                $"Quality level '{QualitySettings.names[QualitySettings.GetQualityLevel()]}' has Maximum " +
+                $"LOD Level set to {maximum}, so Unity will not draw anything above LOD {maximum}. This " +
+                $"group has {_lodLevels.Count} level(s), so it will be culled at every distance.\n" +
+                "Set it to 0 in Project Settings > Quality, or add levels until there are more than " +
+                $"{maximum}.",
+                MessageType.Error);
+        }
+
+        /// <summary>Screen percentages for the group, in the order the levels are listed.</summary>
+        private float[] LodScreenPercentages()
+        {
+            float[] percentages = new float[_lodLevels.Count];
+            for (int i = 0; i < _lodLevels.Count; i++) percentages[i] = _lodLevels[i].screenPercentage;
+
+            return percentages;
+        }
+
+        /*
+         * A renderer per part per level, under one root. That is what keeps instancing: every character
+         * sitting at a given level batches with the others at that level, part for part.
+         *
+         * An LOD holds a Renderer ARRAY, so a bake with several parts puts all of them in each level and
+         * they switch together. VATAnimator and VATSectionDriver go on the root and write to all of them,
+         * because the group leaves exactly one level enabled at a time.
+         */
+        private static void ConfigureLodGroup(GameObject root, List<VATPartBake> parts, VATClipSet clipSet,
+                                              float[] screenPercentages)
+        {
+            foreach (Transform child in root.transform.Cast<Transform>().ToArray())
+                Object.DestroyImmediate(child.gameObject);
+
+            // A prefab that was not a group has its mesh on the root, and it would go on drawing at
+            // full detail underneath every level.
+            StripVATComponents(root);
+
+            int levelCount = parts[0].LodMeshes.Length;
+            LOD[] levels = new LOD[levelCount];
+
+            for (int i = 0; i < levelCount; i++)
+            {
+                GameObject holder = new GameObject($"LOD{i}");
+                holder.transform.SetParent(root.transform, false);
+
+                List<Renderer> renderers = new List<Renderer>();
+
+                foreach (VATPartBake part in parts)
+                {
+                    if (part.LodMeshes == null || i >= part.LodMeshes.Length) continue;
+
+                    GameObject child = holder;
+
+                    // One part can live on the level holder itself; several need one child each so they
+                    // keep their own material and base map.
+                    if (parts.Count > 1)
+                    {
+                        child = new GameObject(part.Name);
+                        child.transform.SetParent(holder.transform, false);
+                    }
+
+                    // No clip set: the components that read it belong on the root, once.
+                    ConfigureVATObject(child, part.LodMeshes[i], part.Materials, part.Bounds, null);
+                    renderers.Add(child.GetComponent<MeshRenderer>());
+                }
+
+                float percentage = i < screenPercentages.Length ? screenPercentages[i] : .01f;
+                levels[i] = new LOD(percentage, renderers.ToArray());
+            }
+
+            LODGroup group = root.GetComponent<LODGroup>();
+            if (!group) group = root.AddComponent<LODGroup>();
+
+            group.SetLODs(levels);
+
+            /*
+             * Set rather than recalculated. RecalculateBounds reads the renderers, and while a prefab is
+             * assembled in memory those have not settled - it came out at 1 for a character nearly two
+             * units tall, which halves every transition distance in the group.
+             *
+             * The animated bounds are already measured and are the better answer anyway: a VAT mesh
+             * moves well outside its rest pose, so the group should switch on how big the character
+             * gets, not on where it happens to stand at frame zero.
+             */
+            Bounds groupBounds = parts[0].Bounds;
+            group.localReferencePoint = groupBounds.center;
+            group.size = Mathf.Max(groupBounds.size.x,
+                Mathf.Max(groupBounds.size.y, groupBounds.size.z));
+
+            AttachAnimator(root, clipSet);
+        }
+
+
+        private static void PopulatePrefab(GameObject root, string baseName, List<VATPartBake> parts,
+                                           VATClipSet clipSet, float[] lodScreenPercentages)
+        {
+            if (parts.Count > 0 && parts[0].LodMeshes != null && parts[0].LodMeshes.Length > 0)
+            {
+                ConfigureLodGroup(root, parts, clipSet, lodScreenPercentages);
+                return;
+            }
+
+            StripLodGroup(root);
+
             if (parts.Count == 1)
             {
                 // One part lives on the root, so the prefab drops straight in for the original.
@@ -3979,6 +4170,29 @@ namespace MiVertexAnimation
         }
 
         /// <summary>Clears renderer components off a root that used to be a single-part prefab.</summary>
+        /*
+         * A prefab that was an LOD group and is not one any more keeps its level children and its group
+         * component, and they go on drawing beside whatever replaces them - so a re-bake with the
+         * section turned off would quietly draw the character twice.
+         *
+         * Only the objects this baker makes are touched: direct children named LOD followed by a number.
+         */
+        private static void StripLodGroup(GameObject root)
+        {
+            LODGroup group = root.GetComponent<LODGroup>();
+            if (!group) return;
+
+            foreach (Transform child in root.transform.Cast<Transform>().ToArray())
+            {
+                string name = child.name;
+                if (!name.StartsWith("LOD", System.StringComparison.Ordinal)) continue;
+
+                if (int.TryParse(name.Substring(3), out int _)) Object.DestroyImmediate(child.gameObject);
+            }
+
+            Object.DestroyImmediate(group, true);
+        }
+
         private static void StripVATComponents(GameObject go)
         {
             VATBoundsOverride bounds = go.GetComponent<VATBoundsOverride>();
@@ -4013,6 +4227,19 @@ namespace MiVertexAnimation
             if (!boundsOverride) boundsOverride = go.AddComponent<VATBoundsOverride>();
             boundsOverride.bounds = bounds;
 
+            AttachAnimator(go, clipSet);
+        }
+
+        /*
+         * Split out because an LOD Group puts the renderers on children and the components that drive
+         * them on the root, so the two are not always the same object. Both walk their children for
+         * renderers, which covers either shape.
+         */
+        /// <summary>Puts the playback components on an object, when there is a clip set to give them.</summary>
+        private static void AttachAnimator(GameObject go, VATClipSet clipSet)
+        {
+            if (!clipSet) return;
+
             VATAnimator animator = go.GetComponent<VATAnimator>();
             if (!animator) animator = go.AddComponent<VATAnimator>();
 
@@ -4024,15 +4251,14 @@ namespace MiVertexAnimation
 
             // Only when the bake actually wrote sections, so a prefab that has none is not handed a
             // component with nothing to drive.
-            if (clipSet && clipSet.SectionCount > 0)
-            {
-                VATSectionDriver driver = go.GetComponent<VATSectionDriver>();
-                if (!driver) driver = go.AddComponent<VATSectionDriver>();
+            if (clipSet.SectionCount <= 0) return;
 
-                SerializedObject driverObject = new SerializedObject(driver);
-                driverObject.FindProperty("clipSet").objectReferenceValue = clipSet;
-                driverObject.ApplyModifiedPropertiesWithoutUndo();
-            }
+            VATSectionDriver driver = go.GetComponent<VATSectionDriver>();
+            if (!driver) driver = go.AddComponent<VATSectionDriver>();
+
+            SerializedObject driverObject = new SerializedObject(driver);
+            driverObject.FindProperty("clipSet").objectReferenceValue = clipSet;
+            driverObject.ApplyModifiedPropertiesWithoutUndo();
         }
 
         /*
@@ -4061,12 +4287,78 @@ namespace MiVertexAnimation
 
             int after = baked ? baked.lodCount : 1;
 
+            /*
+             * Kept, but almost certainly not used. Mesh LOD is selected by the GPU Resident Drawer, and
+             * that skips any renderer with a MaterialPropertyBlock on it - which is every VAT instance,
+             * because a property block is how one material plays a different clip per character.
+             * Said out loud because the levels being present makes it look like they are working.
+             */
             if (after >= before)
-                Debug.Log($"[VAT] '{part.Name}' kept all {after} Mesh LOD levels.");
+                Debug.Log($"[VAT] '{part.Name}' kept all {after} Mesh LOD levels. Note that Mesh LOD is " +
+                          "driven by the GPU Resident Drawer, which ignores renderers carrying a " +
+                          "MaterialPropertyBlock - so a VAT instance always draws level 0. Use an " +
+                          "LODGroup of separately baked prefabs instead.");
             else
                 Debug.LogWarning($"[VAT] '{part.Name}' came out with {after} Mesh LOD level(s) where the " +
                                  $"source had {before}. Turn Bake Rest Pose Mesh off to keep them, at the " +
                                  "cost of the prefab pointing at the imported mesh.");
+        }
+
+        /*
+         * One mesh per chosen level, each keeping the FULL vertex buffer and taking only that level's
+         * triangles. Keeping the vertices is the point: SV_VertexID goes on meaning the same vertex, so
+         * every level reads the same textures and none of them needs a bake of its own.
+         *
+         * The vertex shader still only runs for vertices the indices reach, so the work drops with the
+         * triangle count even though the buffer is whole.
+         */
+        /// <summary>Writes a mesh asset per LOD level and returns them in group order.</summary>
+        private Mesh[] SaveLodMeshes(GameObject instance, VATPartBake part, Mesh full)
+        {
+            Mesh[] meshes = new Mesh[_lodLevels.Count];
+
+            for (int i = 0; i < _lodLevels.Count; i++)
+            {
+                string name = $"{part.Name}_LOD{i}";
+
+                /*
+                 * One renderer can have its finished mesh cut down, which keeps blend shapes and every
+                 * channel. Several have to be merged again at that level, because a merged mesh has no
+                 * levels of its own to cut - they belonged to the meshes it was built from.
+                 */
+                Mesh level = part.Targets.Count == 1
+                    ? BuildLodMesh(full, ClampLevel(part.Targets[0], _lodLevels[i].level), name)
+                    : BuildCombinedMesh(instance, part.Targets.ToArray(), name, _lodLevels[i].level);
+
+                if (SectionsActive && part.Targets.Count > 1) ApplySectionMask(level, part);
+
+                meshes[i] = SaveMesh(level, name);
+            }
+
+            return meshes;
+        }
+
+        private static int ClampLevel(SkinnedMeshRenderer target, int level)
+        {
+            Mesh mesh = target ? target.sharedMesh : null;
+            return mesh ? Mathf.Clamp(level, 0, Mathf.Max(0, mesh.lodCount - 1)) : 0;
+        }
+
+        /// <summary>A copy of a mesh carrying one of its LOD levels as its only index buffer.</summary>
+        private static Mesh BuildLodMesh(Mesh full, int level, string name)
+        {
+            Mesh copy = Object.Instantiate(full);
+            copy.name = name;
+
+            // The copy carries every level; collapsing it to one means this mesh is what it says it is,
+            // and stops Unity trying to pick a level inside a level.
+            copy.lodCount = 1;
+
+            for (int sub = 0; sub < full.subMeshCount; sub++)
+                copy.SetTriangles(full.GetIndices(sub, level), sub, false);
+
+            copy.RecalculateBounds();
+            return copy;
         }
 
         /// <summary>One renderer's mesh, holding the rest pose in the root's space.</summary>
@@ -4122,7 +4414,8 @@ namespace MiVertexAnimation
         /// <param name="targets">Renderers to merge, in the order the frame loop visits them.</param>
         /// <param name="name">Name given to the generated mesh.</param>
         /// <returns>The merged mesh at the rest pose, not yet saved as an asset.</returns>
-        private static Mesh BuildCombinedMesh(GameObject instance, SkinnedMeshRenderer[] targets, string name)
+        private static Mesh BuildCombinedMesh(GameObject instance, SkinnedMeshRenderer[] targets, string name,
+                                              int level = 0)
         {
             List<Vector3> vertices = new List<Vector3>();
             List<Vector3> normals = new List<Vector3>();
@@ -4172,9 +4465,18 @@ namespace MiVertexAnimation
                         colors.Add(c.Length == v.Length ? c[i] : Color.white);
                     }
 
-                    for (int sm = 0; sm < scratch.subMeshCount; sm++)
+                    /*
+                     * Indices come from the SOURCE mesh rather than the baked snapshot, because that is
+                     * where the Mesh LOD levels live - BakeMesh returns a pose, not a level. Vertex
+                     * order is identical between the two, so a level's indices address the snapshot's
+                     * vertices exactly as they address the source's.
+                     */
+                    Mesh indexSource = target.sharedMesh ? target.sharedMesh : scratch;
+                    int wanted = Mathf.Clamp(level, 0, Mathf.Max(0, indexSource.lodCount - 1));
+
+                    for (int sm = 0; sm < indexSource.subMeshCount; sm++)
                     {
-                        int[] tris = scratch.GetTriangles(sm);
+                        int[] tris = indexSource.GetIndices(sm, wanted);
                         for (int i = 0; i < tris.Length; i++) tris[i] += offset;
 
                         subMeshes.Add(tris);
@@ -4407,7 +4709,290 @@ namespace MiVertexAnimation
 
         /// <summary>Whether this bake writes its own mesh rather than reusing the imported one.</summary>
         private bool WritesOwnMesh => _rendererMode == VATRendererMode.COMBINED_MESH
-                                      || SectionsActive || _restPoseMesh;
+                                      || SectionsActive || LodGroupActive || _restPoseMesh;
+
+        /*
+         * Unity 6 Mesh LOD cannot be used directly here: an instanced batch is one draw over one index
+         * range, and Mesh LOD needs a different range per renderer, so instancing wins and the levels go
+         * unused. Extracting them into an LODGroup gets both - every character at a given level still
+         * instances with the others at that level.
+         *
+         * And because the levels share the source's vertex buffer, every extracted mesh keeps the full
+         * one. SV_VertexID goes on meaning the same vertex, so ONE texture set serves every level and
+         * the only thing that grows is a mesh asset per level.
+         */
+        /// <summary>The LOD Group section: which source levels to bake, and when each takes over.</summary>
+        private void DrawLodGroupSettings(SkinnedMeshRenderer renderer)
+        {
+            bool wanted = VATUi.BeginSection("LOD Group",
+                VATIcons.First("LODGroup Icon", "PreMatCube", "Mesh Icon"), _lodGroup,
+                "Bake several of the mesh's own LOD levels into one prefab under an LODGroup. Costs a " +
+                "mesh per level and no extra texture memory, and keeps GPU instancing.");
+
+            if (wanted != _lodGroup)
+            {
+                _lodGroup = wanted;
+                if (_lodGroup && _lodLevels.Count == 0) SeedLodLevels(renderer);
+
+                _previewLod = -1;
+                InvalidatePreviewTopology();
+                MarkEdited();
+            }
+
+            if (!_lodGroup)
+            {
+                VATUi.EndSection();
+                return;
+            }
+
+            int available = AvailableLods(renderer);
+
+            if (available <= 1)
+            {
+                EditorGUILayout.HelpBox(
+                    "This mesh has no Mesh LOD levels to take. Select the model, turn on " +
+                    "Generate Mesh LODs in its Model import settings, and apply.",
+                    MessageType.Warning);
+
+                VATUi.EndSection();
+                return;
+            }
+
+            EditorGUILayout.LabelField(
+                _rendererMode == VATRendererMode.COMBINED_MESH
+                    ? $"Source has {available} Mesh LOD levels, merged per level as the mesh is."
+                    : $"Source has {available} Mesh LOD levels.",
+                EditorStyles.miniLabel);
+
+            int removeAt = -1;
+            for (int i = 0; i < _lodLevels.Count; i++)
+                if (DrawLodLevelRow(_lodLevels[i], renderer, available, i)) removeAt = i;
+
+            if (removeAt >= 0)
+            {
+                _lodLevels.RemoveAt(removeAt);
+
+                // Rows are keyed by position, so anything below the one removed has shifted.
+                _previewLod = -1;
+                InvalidatePreviewTopology();
+                MarkEdited();
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.FlexibleSpace();
+
+                using (new EditorGUI.DisabledScope(_lodLevels.Count >= available))
+                {
+                    if (VATUi.Button(VATUi.Content("Add Level",
+                            "One more step between full detail and the furthest away.",
+                            VATIcons.First("Toolbar Plus", "CreateAddNew")), VATUi.GENTLE,
+                            GUILayout.Width(120f)))
+                    {
+                        AddLodLevel(renderer, available);
+                        MarkEdited();
+                    }
+                }
+            }
+
+            DrawLodGroupCost(renderer);
+            WarnAboutMaximumLodLevel();
+            VATUi.EndSection();
+        }
+
+        private bool DrawLodLevelRow(VATLodLevel entry, SkinnedMeshRenderer renderer, int available, int index)
+        {
+            bool remove = false;
+
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label($"LOD {index}", EditorStyles.boldLabel, GUILayout.Width(60f));
+
+                    EditorGUI.BeginChangeCheck();
+                    entry.level = EditorGUILayout.IntPopup(
+                        entry.level,
+                        System.Linq.Enumerable.Range(0, available)
+                            .Select(l => $"Source level {l}  ({LodTriangles(renderer, l):n0} tris)").ToArray(),
+                        System.Linq.Enumerable.Range(0, available).ToArray());
+
+                    if (EditorGUI.EndChangeCheck() && _previewLod == index) InvalidatePreviewTopology();
+
+                    bool shown = _previewLod == index;
+                    bool wantsPreview = GUILayout.Toggle(shown,
+                        VATUi.Content("Preview", "Draw the preview with this level's triangles.",
+                            VATIcons.First("ViewToolOrbit", "SceneViewFx")),
+                        EditorStyles.miniButton, GUILayout.Width(84f));
+
+                    if (wantsPreview != shown)
+                    {
+                        _previewLod = wantsPreview ? index : -1;
+                        InvalidatePreviewTopology();
+                    }
+
+                    // The first level is what everything else is a reduction of, so it always draws.
+                    using (new EditorGUI.DisabledScope(index == 0 && _lodLevels.Count == 1))
+                    {
+                        if (VATUi.Button(VATUi.Content("Remove", "Drop this level from the group.",
+                                VATIcons.First("Toolbar Minus", "TreeEditor.Trash")),
+                                VATUi.DESTRUCTIVE, GUILayout.Width(90f)))
+                            remove = true;
+                    }
+                }
+
+                float distance = LodDistance(renderer, entry.screenPercentage);
+
+                EditorGUILayout.LabelField(entry.screenPercentage <= 0f
+                    ? "Never stops drawing."
+                    : $"Takes over past about {distance:0.#} m, at a 60 degree field of view.",
+                    EditorStyles.miniLabel);
+
+                entry.screenPercentage = EditorGUILayout.Slider(
+                    index == _lodLevels.Count - 1
+                        ? new GUIContent("Cull Below",
+                            "Fraction of screen height at which the object stops drawing altogether. " +
+                            "0 never culls it, which is usually what you want - anything higher makes " +
+                            "distant characters vanish.")
+                        : new GUIContent("Switch Below",
+                            "Fraction of screen height at which the next level takes over. Lower is " +
+                            "further away, so these descend down the list."),
+                    entry.screenPercentage, 0f, 1f);
+            }
+
+            return remove;
+        }
+
+        /*
+         * The number people expect to go up here is texture memory, and it does not. Levels share the
+         * source's vertex buffer, so they share the textures too - what grows is one mesh asset per
+         * level, which next to a VAT texture set is nothing. Worth showing both so the trade is clear.
+         */
+        private void DrawLodGroupCost(SkinnedMeshRenderer renderer)
+        {
+            Mesh mesh = renderer ? renderer.sharedMesh : null;
+            if (!mesh) return;
+
+            long baseTriangles = LodTriangles(renderer, 0);
+            long groupTriangles = 0L;
+
+            foreach (VATLodLevel entry in _lodLevels) groupTriangles += LodTriangles(renderer, entry.level);
+
+            // Positions, normals, one UV and the mask channel, near enough for a figure to judge by.
+            float meshMegabytes = mesh.vertexCount * 44f * _lodLevels.Count / (1024f * 1024f);
+
+            EditorGUILayout.HelpBox(
+                $"{_lodLevels.Count} level(s), {groupTriangles:n0} triangles across all of them against " +
+                $"{baseTriangles:n0} at full detail.\n" +
+                $"No extra texture memory - every level reads the same textures. About " +
+                $"{meshMegabytes:0.#} MB of extra mesh assets.",
+                MessageType.None);
+        }
+
+        private void SeedLodLevels(SkinnedMeshRenderer renderer)
+        {
+            int available = AvailableLods(renderer);
+            _lodLevels.Clear();
+
+            // Three steps by default: full detail, something around the middle, and the coarsest.
+            int[] wanted = available >= 3
+                ? new[] { 0, available / 2, available - 1 }
+                : new[] { 0 };
+
+            for (int i = 0; i < wanted.Length; i++)
+                _lodLevels.Add(new VATLodLevel
+                {
+                    level = wanted[i],
+
+                    // The last entry is where the object stops drawing altogether, so it starts at 0.
+                    // The rest spread from a sixth of screen height down to a fiftieth, which on a
+                    // two metre character is roughly ten metres out to sixty. Half of screen height,
+                    // the obvious looking number, is a character at arm's length.
+                    screenPercentage = i == wanted.Length - 1
+                        ? 0f
+                        : Mathf.Lerp(.15f, .03f, wanted.Length > 2 ? i / (wanted.Length - 2f) : 0f)
+                });
+        }
+
+        private void AddLodLevel(SkinnedMeshRenderer renderer, int available)
+        {
+            int last = _lodLevels.Count > 0 ? _lodLevels[_lodLevels.Count - 1].level : -1;
+
+            // Whatever was last becomes an ordinary step, and the new level takes over as the point the
+            // object stops drawing.
+            if (_lodLevels.Count > 0)
+            {
+                VATLodLevel previous = _lodLevels[_lodLevels.Count - 1];
+                if (previous.screenPercentage <= 0f) previous.screenPercentage = .05f;
+            }
+
+            _lodLevels.Add(new VATLodLevel
+            {
+                level = Mathf.Min(last + 1, available - 1),
+                screenPercentage = 0f
+            });
+        }
+
+        /// <summary>True when this bake writes an LODGroup rather than a single renderer.</summary>
+        private bool LodGroupActive => _lodGroup && _lodLevels.Count > 0;
+
+        private static List<VATLodLevel> CloneLodLevels(List<VATLodLevel> source)
+        {
+            List<VATLodLevel> copy = new List<VATLodLevel>();
+            if (source == null) return copy;
+
+            foreach (VATLodLevel level in source)
+                copy.Add(new VATLodLevel { level = level.level, screenPercentage = level.screenPercentage });
+
+            return copy;
+        }
+
+        /// <summary>Mesh LOD levels the chosen renderer's mesh actually carries.</summary>
+        private int AvailableLods(SkinnedMeshRenderer renderer)
+        {
+            // Every renderer in the bake has to have a level for it to be worth offering, so the
+            // fewest anyone carries is the number the group can actually use.
+            if (_rendererMode == VATRendererMode.SELECTED)
+            {
+                Mesh single = renderer ? renderer.sharedMesh : null;
+                return single ? Mathf.Max(1, single.lodCount) : 1;
+            }
+
+            int fewest = int.MaxValue;
+
+            foreach (SkinnedMeshRenderer other in _renderers)
+            {
+                Mesh mesh = other ? other.sharedMesh : null;
+                if (mesh) fewest = Mathf.Min(fewest, Mathf.Max(1, mesh.lodCount));
+            }
+
+            return fewest == int.MaxValue ? 1 : fewest;
+        }
+
+        /// <summary>Triangles one source level draws, which is what makes a level worth picking.</summary>
+        private long LodTriangles(SkinnedMeshRenderer renderer, int level)
+        {
+            long indices = 0L;
+
+            foreach (SkinnedMeshRenderer target in LodSourceRenderers(renderer))
+            {
+                Mesh mesh = target ? target.sharedMesh : null;
+                if (!mesh) continue;
+
+                int wanted = Mathf.Clamp(level, 0, Mathf.Max(0, mesh.lodCount - 1));
+                for (int sub = 0; sub < mesh.subMeshCount; sub++) indices += mesh.GetIndexCount(sub, wanted);
+            }
+
+            return indices / 3L;
+        }
+
+        /// <summary>The renderers a level is counted over, which is all of them outside Selected mode.</summary>
+        private IEnumerable<SkinnedMeshRenderer> LodSourceRenderers(SkinnedMeshRenderer renderer)
+        {
+            if (_rendererMode == VATRendererMode.SELECTED) return new[] { renderer };
+
+            return _renderers;
+        }
 
         /// <summary>True when this bake has at least one section to write.</summary>
         private bool SectionsActive => _sectionsEnabled && _sections.Count > 0;
@@ -5121,8 +5706,14 @@ namespace MiVertexAnimation
             }
 
             mesh.SetUVs(3, masks);
+
+            // Rebuilt once per LOD level as well as for the mesh itself, and saying so each time would
+            // bury everything else the bake reports.
+            bool first = part.SectionMasks == null;
             part.SectionMasks = masks.ToArray();
-            Debug.Log($"[VAT] Section mask on '{part.Name}': {affected}/{masks.Count} vertices affected");
+
+            if (first)
+                Debug.Log($"[VAT] Section mask on '{part.Name}': {affected}/{masks.Count} vertices affected");
         }
 
         /// <summary>What goes into the clip set so scripts can address sections by name.</summary>

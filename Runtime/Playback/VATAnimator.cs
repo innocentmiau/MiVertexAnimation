@@ -18,7 +18,6 @@ namespace MiVertexAnimation
     /// <summary>
     /// Drives clip selection on a VAT renderer: which clip plays, and the cross-fade when it changes.
     /// </summary>
-    [RequireComponent(typeof(Renderer))]
     [DisallowMultipleComponent]
     [ExecuteAlways]
     public class VATAnimator : MonoBehaviour
@@ -58,7 +57,12 @@ namespace MiVertexAnimation
         /// </summary>
         public event Action<VATAnimator, VATClipEvent> ClipEventFired;
 
-        private Renderer _renderer;
+        /*
+         * Every renderer underneath, not just one on this object. An LOD Group bake puts a renderer per
+         * level under a root that has none of its own, and the group enables one at a time - so the
+         * state has to be written to all of them or a character freezes the moment it changes level.
+         */
+        private Renderer[] _renderers;
         private MaterialPropertyBlock _block;
 
         private float _clipStart;
@@ -90,7 +94,9 @@ namespace MiVertexAnimation
             {
                 if (clipSet && clipSet.Count > 0) return clipSet.Count;
 
-                Material material = _renderer ? _renderer.sharedMaterial : null;
+                Material material = _renderers != null && _renderers.Length > 0 && _renderers[0]
+                    ? _renderers[0].sharedMaterial
+                    : null;
                 return material ? Mathf.Max(1, Mathf.RoundToInt(material.GetFloat(CLIP_COUNT_ID))) : 1;
             }
         }
@@ -100,7 +106,7 @@ namespace MiVertexAnimation
 
         private void OnEnable()
         {
-            _renderer = GetComponent<Renderer>();
+            _renderers = GetComponentsInChildren<Renderer>(true);
 
             float now = Now;
             // Offsetting the start time backwards lands the loop at an arbitrary phase. Kept small:
@@ -224,22 +230,27 @@ namespace MiVertexAnimation
         [ContextMenu("Apply")]
         public void Apply()
         {
-            if (!_renderer)
-                _renderer = GetComponent<Renderer>();
+            if (_renderers == null || _renderers.Length == 0)
+                _renderers = GetComponentsInChildren<Renderer>(true);
 
-            if (!_renderer) return;
+            if (_renderers.Length == 0) return;
 
             _block ??= new MaterialPropertyBlock();
 
-            _renderer.GetPropertyBlock(_block);
-            _block.SetFloat(CLIP_ID, clipIndex);
-            _block.SetFloat(CLIP_START_ID, _clipStart);
-            _block.SetFloat(CLAMP_ID, _clamp ? 1f : 0f);
-            _block.SetFloat(PREVIOUS_CLIP_ID, _previousClip);
-            _block.SetFloat(PREVIOUS_START_ID, _previousStart);
-            _block.SetFloat(PREVIOUS_CLAMP_ID, _previousClamp ? 1f : 0f);
-            _block.SetFloat(BLEND_START_ID, _blendStart);
-            _renderer.SetPropertyBlock(_block);
+            foreach (Renderer renderer in _renderers)
+            {
+                if (!renderer) continue;
+
+                renderer.GetPropertyBlock(_block);
+                _block.SetFloat(CLIP_ID, clipIndex);
+                _block.SetFloat(CLIP_START_ID, _clipStart);
+                _block.SetFloat(CLAMP_ID, _clamp ? 1f : 0f);
+                _block.SetFloat(PREVIOUS_CLIP_ID, _previousClip);
+                _block.SetFloat(PREVIOUS_START_ID, _previousStart);
+                _block.SetFloat(PREVIOUS_CLAMP_ID, _previousClamp ? 1f : 0f);
+                _block.SetFloat(BLEND_START_ID, _blendStart);
+                renderer.SetPropertyBlock(_block);
+            }
         }
 
         // Hand the current state to the outgoing slot before overwriting it,

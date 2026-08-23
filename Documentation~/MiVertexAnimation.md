@@ -611,3 +611,59 @@ an ordinary skinned mesh skins once and reuses the result.
 One interaction is worth knowing: with **Bake Normals off**, the shadow caster has only the mesh's
 bind-pose normals to bias along, and those are wrong wherever the animation bends the surface. Acne
 gets noticeably worse exactly where the mesh deforms most.
+
+### Mesh LOD
+
+Unity 6 Mesh LOD stores extra index buffers over the same vertex buffer, so a decimated level reuses
+the very same vertices and `SV_VertexID` keeps addressing the right texel. A baked mesh carries its
+levels across intact, and in principle VAT and Mesh LOD fit together perfectly.
+
+In practice they do not, and it is worth knowing why before spending an afternoon on it. Mesh LOD
+levels are selected by the **GPU Resident Drawer**, and the GPU Resident Drawer skips any renderer
+with a `MaterialPropertyBlock` set on it. A property block is exactly how VAT gives every instance
+its own clip and playback time while they all share one material, so every VAT renderer is skipped
+and always draws level 0.
+
+For level of detail on a VAT character, bake each level as its own prefab in Selected mode and
+assemble them under a classic **LODGroup**, which has no such restriction. Keep Start/End Frame,
+Frame Step and the clip identical across levels or they pop as they swap.
+
+### Mesh LOD
+
+Unity 6 Mesh LOD stores extra index buffers over the same vertex buffer, so a decimated level reuses
+the very same vertices and `SV_VertexID` still addresses the right texel. A baked mesh carries its
+levels across intact and animates correctly at every one of them. Tested down to level 9.
+
+It will not do anything while **GPU Instancing** is on, and that is not a bug in either feature. An
+instanced batch is one draw call over one index range; Mesh LOD needs a different range per
+renderer. Unity cannot do both, and instancing wins.
+
+That leaves a real choice:
+
+| | Draw calls | Vertex work | Texture memory |
+| --- | --- | --- | --- |
+| GPU Instancing, the default | low | full | one set |
+| Mesh LOD, instancing off | one draw per character per pass | reduced | one set |
+| LODGroup of separate bakes | low | reduced | one set per level |
+
+Turning instancing off costs more than it appears to. Per-instance playback rides in a
+`MaterialPropertyBlock`, which already rules out the SRP Batcher, so without instancing there is no
+batching left at all - every character becomes a full draw, in each of six passes.
+
+The **LOD Group** section does this for you. Pick which of the source's Mesh LOD levels to use and
+when each takes over, and the bake writes one mesh per level and assembles them under an `LODGroup`.
+Every character at a given level still instances with the others at that level, so batching and
+vertex reduction both survive.
+
+Every level keeps the full vertex buffer and takes only its own triangles, so `SV_VertexID` goes on
+meaning the same vertex and **one texture set serves them all**. Only mesh assets grow, by roughly
+the vertex data once per level - nothing next to a VAT texture set. The vertex shader still runs
+only for vertices the indices reach, so the work drops with the triangle count regardless.
+
+It works in every renderer mode. Combined merges each level as it merges the mesh, taking each
+source's indices for that level. Separate Parts puts every part into each level, because an `LOD`
+holds an array of renderers and they switch together.
+
+Mesh LOD is worth the trade only for a few characters seen at very different distances, where draw
+calls were never the problem.
+
