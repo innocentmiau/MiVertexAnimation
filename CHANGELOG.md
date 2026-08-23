@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A **Demo** sample, importable from the Package Manager. A scene with a crowd, an orbiting target and a character that turns to follow it, a CC0 rigged character to bake it from (as a prefab with its controller already assigned, which is what the baker's clip list needs), and the four section-driving modes on one component. `VATDemoRig` takes any baked prefab in one field, so the same scene demonstrates your own character rather than the one in the box.
+- `VATBakerWindow.ShowWith(settings, outputPath)`, which opens the baker already loaded with a settings asset. The demo sample uses it so its setup button lands on a window that is ready to bake, rather than on whatever was baked last; the preset itself is a `VATBakeSettings` asset in the sample, editable like any other.
+
+### Changed
+
+- Samples moved to `Samples~` and are declared in `package.json`, so they no longer compile in every project that installs the package. Import them from the Package Manager when you want them; the imported copy lives in `Assets/Samples` and is yours to edit.
+
 ### Fixed
+
+- The section bone filter re-read every mesh's skin weights once per bone per renderer per repaint. `mesh.boneWeights` allocates a fresh array on each access and the cache held one mesh at a time, so spanning six renderers turned a single read into over a hundred. Skin weights and bone subtrees are both cached per renderer now, and section coverage is worked out for all four channels in one pass instead of rebuilding the same mask once per channel.
+
+- A section on a multi-mesh character reported "moves no vertices on this mesh" while the preview highlight showed it working. The mask is built over every renderer the bake reads — Combined Mesh puts all of them in one part — but the warning, the vertex count, the bone dropdown and the bone a new section starts on all asked a single renderer, the one selected above. On a character split into six meshes, a head bone weights only the head mesh, so anything measured against the body reported nothing. All four now span the same renderers the bake does, and the bone list is the union across them rather than one renderer's array.
 
 - Two clips with the same name no longer share one entry in the baker. Frame ranges and authored events were keyed by clip name, so an `Idle` from one FBX and an `Idle` from another looked like the same clip: editing one range edited both, opening the shorter one clamped the longer one's End Frame down to its length, markers placed on either appeared on both, and **Save Events** wrote one clip's markers over the other's slice in the baked clip set. Both are keyed by clip reference now, and the name is only a label. This also means renaming a clip keeps its range and its events instead of silently orphaning them. Settings assets written before this adopt their clips on load, so nothing needs re-authoring.
 

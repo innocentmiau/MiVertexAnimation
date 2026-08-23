@@ -191,10 +191,17 @@ namespace MiVertexAnimation
 
         // Both are answers to "how much of this mesh does that bone actually move", which costs a pass
         // over every vertex and must not run once per repaint.
-        [System.NonSerialized] private HashSet<int> _weightedBones;
-        [System.NonSerialized] private int _weightedBonesKey;
-        [System.NonSerialized] private readonly Dictionary<string, Vector2Int> _sectionCoverage =
-            new Dictionary<string, Vector2Int>();
+        // Per mesh rather than one slot: the section bone filter asks about every renderer being
+        // baked, and a single slot swapped its key on every call, re-reading mesh.boneWeights - which
+        // allocates a fresh array per access - once per bone per renderer per repaint.
+        [System.NonSerialized] private readonly Dictionary<int, HashSet<int>> _weightedBones =
+            new Dictionary<int, HashSet<int>>();
+
+        [System.NonSerialized] private readonly Dictionary<string, HashSet<int>> _boneSubtrees =
+            new Dictionary<string, HashSet<int>>();
+
+        [System.NonSerialized] private readonly Dictionary<string, Vector2Int[]> _sectionCoverage =
+            new Dictionary<string, Vector2Int[]>();
 
         // Measured while the preview quantizes, because the whole point of the option is that the
         // result does not look different and a picture cannot show that it did anything at all.
@@ -207,6 +214,35 @@ namespace MiVertexAnimation
         public static void ShowWindow()
         {
             GetWindow<VATBakerWindow>("Vertex Animation Baker").minSize = new Vector2(380, 480);
+        }
+
+        /*
+         * Opening the baker on whatever the last bake happened to be is fine for someone who set that
+         * bake up, and useless to someone who has just imported a sample: they get a window pointed at
+         * a model they have never seen, writing to a folder that means nothing to them.
+         *
+         * The output path is passed in rather than read from the asset because a sample does not know
+         * where it will be imported to, and a path written at authoring time would be wrong everywhere.
+         */
+        /// <summary>
+        /// Opens the baker already loaded with a settings asset, ready to bake.
+        /// </summary>
+        /// <param name="settings">Settings to load, exactly as the Bake Settings field would.</param>
+        /// <param name="outputPath">Where this bake should write, or null to use the asset's own path.</param>
+        /// <returns>The baker window, focused.</returns>
+        public static VATBakerWindow ShowWith(VATBakeSettings settings, string outputPath = null)
+        {
+            VATBakerWindow window = GetWindow<VATBakerWindow>("Vertex Animation Baker");
+            window.minSize = new Vector2(380, 480);
+
+            if (settings)
+            {
+                window.ApplySettings(settings);
+                if (!string.IsNullOrEmpty(outputPath)) window._outputPath = outputPath;
+                window.Repaint();
+            }
+
+            return window;
         }
 
         /*
@@ -2435,6 +2471,9 @@ namespace MiVertexAnimation
 
         private void Refresh()
         {
+            _weightedBones.Clear();
+            _boneSubtrees.Clear();
+
             _renderers = _target
                 ? _target.GetComponentsInChildren<SkinnedMeshRenderer>(true)
                 : new SkinnedMeshRenderer[0];
@@ -5194,12 +5233,17 @@ namespace MiVertexAnimation
                         remove = true;
                 }
 
-                Transform[] bones = renderer ? renderer.bones : new Transform[0];
+                List<SkinnedMeshRenderer> targets = SectionRenderers(renderer);
+                Transform[] bones = SectionBones(targets);
 
                 if (bones.Length == 0)
                 {
                     EditorGUILayout.HelpBox(
-                        "This renderer has no bones, so there are no skin weights to derive a section from.",
+                        targets.Count > 1
+                            ? "None of the renderers being baked has bones, so there are no skin " +
+                              "weights to derive a section from."
+                            : "This renderer has no bones, so there are no skin weights to derive a " +
+                              "section from.",
                         MessageType.Warning);
                     return remove;
                 }
@@ -5214,8 +5258,11 @@ namespace MiVertexAnimation
 
                     bool mine = bones[i].name == section.boneName;
                     if (!mine && BoneTaken(section, bones[i].name)) continue;
-                    if (!mine && !VATUiSettings.ShowWeightlessBones && !BoneMovesAnything(renderer, bones[i].name))
+                    if (!mine && !VATUiSettings.ShowWeightlessBones &&
+                        !BoneMovesAnything(targets, bones[i].name))
+                    {
                         continue;
+                    }
 
                     choices.Add(bones[i].name);
                 }
@@ -5223,7 +5270,7 @@ namespace MiVertexAnimation
                 if (choices.Count == 0)
                 {
                     EditorGUILayout.HelpBox(
-                        "Every bone on this renderer is already claimed by another section.",
+                        "Every bone on the mesh being baked is already claimed by another section.",
                         MessageType.Warning);
                     return remove;
                 }
@@ -5271,16 +5318,26 @@ namespace MiVertexAnimation
 
                 if (_highlightSection == index) DrawSectionTestDrive();
 
-                Vector2Int coverage = SectionCoverage(renderer, OrderedSections().IndexOf(section));
+                int channel = OrderedSections().IndexOf(section);
+                Vector2Int coverage = Vector2Int.zero;
+                int vertexCount = 0;
+                int boneCount = 0;
+
+                foreach (SkinnedMeshRenderer target in targets)
+                {
+                    coverage += SectionCoverage(target, channel);
+                    vertexCount += target.sharedMesh.vertexCount;
+                    boneCount = Mathf.Max(boneCount, BoneSubtree(target, section.boneName).Count);
+                }
+
                 int covered = coverage.x + coverage.y;
-                int vertexCount = renderer && renderer.sharedMesh ? renderer.sharedMesh.vertexCount : 0;
-                int boneCount = BoneSubtree(renderer, section.boneName).Count;
 
                 if (covered == 0)
                     EditorGUILayout.HelpBox(
-                        $"'{section.boneName}' moves no vertices on this mesh, so this section would bake " +
-                        "an empty mask. Either the bone carries no skin weight, or a higher priority " +
-                        "section has taken every vertex it claimed.",
+                        $"'{section.boneName}' moves no vertices on " +
+                        (targets.Count > 1 ? "any mesh being baked" : "this mesh") +
+                        ", so this section would bake an empty mask. Either the bone carries no skin " +
+                        "weight, or a higher priority section has taken every vertex it claimed.",
                         MessageType.Warning);
                 else
                     EditorGUILayout.LabelField(
@@ -5446,7 +5503,7 @@ namespace MiVertexAnimation
             Mesh mesh = renderer ? renderer.sharedMesh : null;
             int key = mesh ? mesh.GetInstanceID() : 0;
 
-            if (_weightedBones != null && _weightedBonesKey == key) return _weightedBones;
+            if (_weightedBones.TryGetValue(key, out HashSet<int> cached)) return cached;
 
             HashSet<int> used = new HashSet<int>();
             BoneWeight[] weights = mesh ? mesh.boneWeights : new BoneWeight[0];
@@ -5459,8 +5516,7 @@ namespace MiVertexAnimation
                 if (weight.weight3 > 0f) used.Add(weight.boneIndex3);
             }
 
-            _weightedBones = used;
-            _weightedBonesKey = key;
+            _weightedBones[key] = used;
             return used;
         }
 
@@ -5475,32 +5531,96 @@ namespace MiVertexAnimation
             return false;
         }
 
+        /// <summary>Whether a bone moves any vertex on any renderer this bake will read.</summary>
+        private bool BoneMovesAnything(List<SkinnedMeshRenderer> renderers, string boneName)
+        {
+            foreach (SkinnedMeshRenderer renderer in renderers)
+                if (BoneMovesAnything(renderer, boneName)) return true;
+
+            return false;
+        }
+
+        /*
+         * Six meshes skinned to one armature hand back the same bone array six times, so this is
+         * usually a copy. It is a union rather than "whichever renderer is selected" because nothing
+         * guarantees that: a character can carry a prop skinned to its own extra bones, and picking
+         * the selected renderer's array would hide them or hide the body's, depending on the index.
+         */
+        /// <summary>Every bone across the renderers being baked, in first-seen order, without repeats.</summary>
+        private static Transform[] SectionBones(List<SkinnedMeshRenderer> renderers)
+        {
+            List<Transform> bones = new List<Transform>();
+            HashSet<Transform> seen = new HashSet<Transform>();
+
+            foreach (SkinnedMeshRenderer renderer in renderers)
+            {
+                if (!renderer) continue;
+
+                foreach (Transform bone in renderer.bones)
+                    if (bone && seen.Add(bone)) bones.Add(bone);
+            }
+
+            return bones.ToArray();
+        }
+
+        /*
+         * A section's mask is built over every renderer the bake reads - BuildSectionMasks walks
+         * part.Targets, and Combined Mesh puts all of them in one part - so anything that reports on a
+         * section has to span the same set. Asking one renderer said a head bone moved nothing on a
+         * six mesh character whenever the selected renderer was not the head, while the preview
+         * highlight, which does walk every part, painted the head correctly.
+         */
+        /// <summary>Every renderer a section's mask will be built over, given the current mode.</summary>
+        private List<SkinnedMeshRenderer> SectionRenderers(SkinnedMeshRenderer selected)
+        {
+            List<SkinnedMeshRenderer> list = new List<SkinnedMeshRenderer>();
+
+            if (_rendererMode == VATRendererMode.SELECTED)
+            {
+                if (selected && selected.sharedMesh) list.Add(selected);
+                return list;
+            }
+
+            foreach (SkinnedMeshRenderer renderer in _renderers)
+                if (renderer && renderer.sharedMesh) list.Add(renderer);
+
+            return list;
+        }
+
+        /*
+         * Cached for every channel at once rather than one at a time. Building the mask hands back all
+         * four weights per vertex whichever channel was asked for, so keying the cache by channel meant
+         * four sections across six renderers rebuilt the same masks twenty-four times instead of six.
+         */
         /// <summary>Vertices this section ends up owning, as (full weight, partial weight).</summary>
         private Vector2Int SectionCoverage(SkinnedMeshRenderer renderer, int channel)
         {
-            Mesh mesh = renderer ? renderer.sharedMesh : null;
-            string key = $"{(mesh ? mesh.GetInstanceID() : 0)}:{channel}:{SectionFingerprint()}";
+            if (channel < 0 || channel >= MAX_SECTIONS) return Vector2Int.zero;
 
-            if (_sectionCoverage.TryGetValue(key, out Vector2Int cached)) return cached;
+            Mesh mesh = renderer ? renderer.sharedMesh : null;
+            string key = $"{(mesh ? mesh.GetInstanceID() : 0)}:{SectionFingerprint()}";
+
+            if (_sectionCoverage.TryGetValue(key, out Vector2Int[] cached)) return cached[channel];
 
             List<Vector4> masks = new List<Vector4>();
             int affected = 0;
             AppendSectionMasks(renderer, masks, ref affected);
 
-            int full = 0;
-            int partial = 0;
+            Vector2Int[] coverage = new Vector2Int[MAX_SECTIONS];
 
             for (int v = 0; v < masks.Count; v++)
             {
-                float weight = channel >= 0 && channel < MAX_SECTIONS ? masks[v][channel] : 0f;
+                Vector4 mask = masks[v];
 
-                if (weight >= .999f) full++;
-                else if (weight > .001f) partial++;
+                for (int c = 0; c < MAX_SECTIONS; c++)
+                {
+                    if (mask[c] >= .999f) coverage[c].x++;
+                    else if (mask[c] > .001f) coverage[c].y++;
+                }
             }
 
-            Vector2Int coverage = new Vector2Int(full, partial);
             _sectionCoverage[key] = coverage;
-            return coverage;
+            return coverage[channel];
         }
 
         /// <summary>Everything about the section list that changes what a mask comes out as.</summary>
@@ -5652,12 +5772,15 @@ namespace MiVertexAnimation
         /// <summary>The first unclaimed bone, so a new section never lands on one already in use.</summary>
         private string FirstFreeBone(SkinnedMeshRenderer renderer)
         {
-            Transform[] bones = renderer ? renderer.bones : new Transform[0];
+            // Across the whole bake, not just the selected renderer: on a character split into six
+            // meshes, a bone that only weights the head is still a perfectly good section.
+            List<SkinnedMeshRenderer> targets = SectionRenderers(renderer);
+            Transform[] bones = SectionBones(targets);
 
             for (int i = 0; i < bones.Length; i++)
             {
                 if (!bones[i] || BoneTaken(null, bones[i].name)) continue;
-                if (!VATUiSettings.ShowWeightlessBones && !BoneMovesAnything(renderer, bones[i].name)) continue;
+                if (!VATUiSettings.ShowWeightlessBones && !BoneMovesAnything(targets, bones[i].name)) continue;
 
                 return bones[i].name;
             }
@@ -5682,17 +5805,24 @@ namespace MiVertexAnimation
         }
 
         /// <summary>Indices of a bone and every bone under it, which is what the mask sums over.</summary>
-        private static HashSet<int> BoneSubtree(SkinnedMeshRenderer renderer, string boneName)
+        private HashSet<int> BoneSubtree(SkinnedMeshRenderer renderer, string boneName)
         {
+            // Keyed on the renderer rather than its mesh, because two renderers can share a mesh and
+            // still be skinned to different bone arrays.
+            string key = $"{(renderer ? renderer.GetInstanceID() : 0)}:{boneName}";
+            if (_boneSubtrees.TryGetValue(key, out HashSet<int> cached)) return cached;
+
             HashSet<int> indices = new HashSet<int>();
             Transform[] bones = renderer ? renderer.bones : new Transform[0];
             Transform root = FindBone(bones, boneName);
 
-            if (!root) return indices;
+            if (root)
+            {
+                for (int i = 0; i < bones.Length; i++)
+                    if (bones[i] && bones[i].IsChildOf(root)) indices.Add(i);
+            }
 
-            for (int i = 0; i < bones.Length; i++)
-                if (bones[i] && bones[i].IsChildOf(root)) indices.Add(i);
-
+            _boneSubtrees[key] = indices;
             return indices;
         }
 

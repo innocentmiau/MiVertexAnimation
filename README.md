@@ -6,6 +6,11 @@ Skinning hundreds of characters costs CPU time you cannot get back, and it is th
 
 ![The baker window: source and clips on the left, live preview and event track on the right](Documentation~/images/bakerWindow.png)
 
+> **The characters, textures and animations in these screenshots are not part of the package.** They
+> are assets from a test project, shown to demonstrate the tool. What ships is the tool itself: the
+> baker window, the runtime components and the shaders. The **Demo** sample adds a CC0 character and
+> an idle clip, so there is something to bake on the first run.
+
 ## What you can do
 
 - **Bake several clips at once** into one texture array, each with its own frame range and frame step.
@@ -80,6 +85,7 @@ Clips are addressed by name, matched ignoring case, so reordering them in the ba
 Scrub the preview to a frame and press **Add at frame**. Events on the source clip are imported automatically, and anything you place in the baker wins over them.
 
 ![The event tracker](Documentation~/images/bakedAnimationEvents.png)
+*The character shown is not included - see the note at the top.*
 
 ```csharp
 animator.ClipEventFired += (a, e) => { if (e.name == "Hit") DealDamage(); };
@@ -98,6 +104,7 @@ A VAT is frozen - every vertex is where the texture says. A section is the excep
 Turn **Sections** on in the baker, add one, and pick a bone. The region comes from the rig's own skin weights, so the falloff down a neck is the one the rigger painted. **Highlight** paints it onto the preview and **Test Turn** moves it before you bake anything.
 
 ![Mesh Section highlighted to show what it will affect and how much](Documentation~/images/meshSectionHighlighted.png)
+*The character shown is not included - see the note at the top.*
 
 ```csharp
 VATSectionDriver driver = GetComponent<VATSectionDriver>();
@@ -108,7 +115,9 @@ driver.Track("Head", driver.LookRotation("Head", player.position));  // follows 
 driver.Release("Head", 0.6f);
 ```
 
-`Samples/VATSectionSample.cs` is a worked example of all four modes.
+The **Demo** sample is a worked example of all four modes: import it from the Package Manager
+(select MiVertexAnimation, then Samples > Demo > Import), bake the model it brings with it, and
+drop the prefab onto the rig in the scene. Its own README has the four steps.
 
 ![VAT Section Sample script that helps understand what's possible](Documentation~/images/meshSectionSampleScript.png)
 ## Limits
@@ -125,3 +134,9 @@ driver.Release("Head", 0.6f);
 ## License
 
 [MIT](LICENSE.md) (c) André Leandro
+
+The **Demo** sample includes a character from the [KayKit Character Pack](https://kaylousberg.com) by
+Kay Lousberg, released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) and
+redistributable on those terms. It is the only asset here not covered by the MIT license above, and it
+is recorded in `Samples~/Demo/Source/THIRD-PARTY.md`. Characters shown in the screenshots are not
+distributed with the package at all.

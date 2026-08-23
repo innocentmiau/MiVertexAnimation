@@ -181,6 +181,13 @@ namespace MiVertexAnimation
         }
 
         /// <summary>
+        /// Points LOOK_AT at something. Used by VATDemoRig, which adds this component to every copy
+        /// it spawns and so cannot set the field in the inspector.
+        /// </summary>
+        /// <param name="value">What to follow, or null to leave the section at rest.</param>
+        public void SetTarget(Transform value) => target = value;
+
+        /// <summary>
         /// Kicks the section and lets it settle. Wire this to whatever fires the weapon.
         /// </summary>
         public void Fire()

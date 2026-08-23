@@ -24,6 +24,13 @@
     "urp",
     "gpu"
   ],
+  "samples": [
+    {
+      "displayName": "Demo",
+      "description": "A scene with a crowd and a head that follows a moving target, plus the model to bake it from. Shows both ways to drive a mesh section.",
+      "path": "Samples~/Demo"
+    }
+  ],
   "documentationUrl": "https://github.com/innocentmiau/MiVertexAnimation#readme",
   "changelogUrl": "https://github.com/innocentmiau/MiVertexAnimation/blob/main/CHANGELOG.md",
   "licensesUrl": "https://github.com/innocentmiau/MiVertexAnimation/blob/main/LICENSE.md"

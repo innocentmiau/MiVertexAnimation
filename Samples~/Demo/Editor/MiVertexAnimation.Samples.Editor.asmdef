@@ -3,6 +3,7 @@
     "rootNamespace": "MiVertexAnimation",
     "references": [
         "MiVertexAnimation",
+        "MiVertexAnimation.Editor",
         "MiVertexAnimation.Samples"
     ],
     "includePlatforms": [

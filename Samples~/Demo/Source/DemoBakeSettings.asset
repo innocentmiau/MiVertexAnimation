@@ -1,0 +1,59 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cf20e68c213f5aac6a1c4fea4f60922f, type: 3}
+  m_Name: DemoBakeSettings
+  m_EditorClassIdentifier: MiVertexAnimation.Editor::MiVertexAnimation.VATBakeSettings
+  version: 3
+  target: {fileID: 1420779946791291736, guid: c559e70e4ca924a4d886e46f2b1b7830, type: 3}
+  rendererMode: 2
+  rendererIndex: 0
+  clips:
+  - {fileID: -5624545281902316504, guid: f4b26c2d194460f17bd129e705e6fab5, type: 3}
+  explicitClip: {fileID: 0}
+  startFrame: 0
+  endFrame: 32
+  frameStep: 1
+  trimLoopFrame: 1
+  blendDuration: 0.15
+  removeRootMotion: 1
+  rootIndex: 0
+  lockRootX: 1
+  lockRootY: 0
+  lockRootZ: 1
+  sectionsEnabled: 1
+  sections:
+  - name: Head
+    boneName: head
+    priority: 0
+    falloff: 1
+    pivotOffset: {x: 0, y: 0, z: 0}
+    maxAngle: 0
+  perClipRanges: 0
+  clipRanges: []
+  authoredEvents: []
+  textureWidth: 1024
+  bakeNormals: 1
+  compactNormals: 0
+  positionPrecision: 1
+  normalPrecision: 0
+  frameQuality: 1
+  stepTolerance: 0.002
+  outputPath: Assets/Samples/MiVertexAnimation/Demo/Baked
+  fileName: Mannequin
+  createMaterial: 1
+  materialShader: {fileID: 4800000, guid: f90a21f75c800c8bc982f3be005d5c37, type: 3}
+  lodGroup: 0
+  lodLevels: []
+  restPoseMesh: 1
+  createPrefab: 1
+  frameBlend: 1
+  updateExisting: 1
