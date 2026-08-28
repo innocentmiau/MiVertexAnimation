@@ -145,6 +145,8 @@ drop the prefab onto the rig in the scene. Its own README has the four steps.
 
 Nothing here is promised or scheduled, it is what seems worth building next, roughly in order of how useful it would be. Suggestions and issues are welcome, and will move things around.
 
+- Add ways to make an animation not loop.(Example would be on a death of a character if we want to keep it laying down on the ground, we need the animation to continue as the last frame of it so we can take care of the character's death instead of looping or changing to different animation)
+
 **Sections**
 
 - **Chained sections.** A spine that drives a head that drives the eyes. Sections are independent today: where two overlap, priority decides which one owns a vertex, and neither inherits the other's rotation.
