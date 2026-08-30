@@ -32,6 +32,8 @@ Skinning hundreds of characters costs CPU time you cannot get back, and it is th
 - **Place animation events** on a track and have them fire at runtime, without an Animator.
 - **Wire those events to UnityEvents** with no code, for the rest of the team.
 - **Turn part of the mesh after the bake** - a head that looks at the player, a torso that leans, an arm that recoils.
+- **Stop a clip where you want it** - on its last frame for a body that stays on the ground, or on the pose that is on screen for a hit stop.
+- **Give one clip its own speed** - a run cycle that keeps up with a movement speed while idle and attack stay where they were, per instance and still in one batch.
 - **Choose what precision costs you**, from vertex positions down to a hundredth of a millimetre to normals a hundred times finer than eight-bit at the same size.
 - **Re-run any bake later** from the settings asset it wrote next to itself.
 
@@ -89,10 +91,23 @@ VATAnimator animator = GetComponent<VATAnimator>();
 
 animator.Play("Walk");                 // cross-fades and loops
 animator.PlayOnce("Attack", "Idle");   // plays once, then returns
+animator.PlayOnce("Die");              // plays once and stays on the last frame
 animator.Snap("Idle");                 // no cross-fade
+
+animator.Freeze();                     // holds the pose on screen
+animator.Resume();                     // carries on from it
+
+animator.Speed = 1.5f;                 // this instance, every clip
+animator.SetClipSpeed("Run", 1.3f);    // this clip only, playing or not
 ```
 
 Clips are addressed by name, matched ignoring case, so reordering them in the baker cannot silently repoint your code.
+
+A dead character needs no death pose baked as its own clip and no code left running: `PlayOnce("Die")`
+stops on the last frame of the death animation and stays there, and the animator drops off the driver
+the moment it lands, so a battlefield of bodies costs exactly what a battlefield of nothing costs.
+Turn **Loop** off on the component to do the same to whatever clip it starts on, for something that
+spawns already dead.
 
 ## Events
 
@@ -144,8 +159,6 @@ drop the prefab onto the rig in the scene. Its own README has the four steps.
 ## Roadmap
 
 Nothing here is promised or scheduled, it is what seems worth building next, roughly in order of how useful it would be. Suggestions and issues are welcome, and will move things around.
-
-- Add ways to make an animation not loop.(Example would be on a death of a character if we want to keep it laying down on the ground, we need the animation to continue as the last frame of it so we can take care of the character's death instead of looping or changing to different animation)
 
 **Sections**
 

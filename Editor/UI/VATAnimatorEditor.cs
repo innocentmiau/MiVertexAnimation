@@ -23,6 +23,8 @@ namespace MiVertexAnimation
 
             SerializedProperty clipSetProperty = serializedObject.FindProperty("clipSet");
             SerializedProperty clipProperty = serializedObject.FindProperty("clipIndex");
+            SerializedProperty loopProperty = serializedObject.FindProperty("loop");
+            SerializedProperty speedProperty = serializedObject.FindProperty("speed");
             SerializedProperty randomizeProperty = serializedObject.FindProperty("randomizeStartPhase");
 
             EditorGUILayout.PropertyField(clipSetProperty);
@@ -51,6 +53,8 @@ namespace MiVertexAnimation
                     MessageType.Info);
             }
 
+            EditorGUILayout.PropertyField(loopProperty);
+            EditorGUILayout.PropertyField(speedProperty);
             EditorGUILayout.PropertyField(randomizeProperty);
             serializedObject.ApplyModifiedProperties();
 
@@ -64,6 +68,8 @@ namespace MiVertexAnimation
                     EditorStyles.boldLabel);
 
                 // Buttons act on every selected animator.
+                VATAnimator first = (VATAnimator)targets[0];
+
                 for (int i = 0; i < clipSet.Count; i++)
                 {
                     using (new EditorGUILayout.HorizontalScope())
@@ -74,11 +80,46 @@ namespace MiVertexAnimation
                                 ((VATAnimator)selected).Play(i);
                         }
 
+                        /*
+                         * Per-clip speed is runtime state rather than a serialized field, so this is
+                         * a live value read back off the animator, not a SerializedProperty. Editing
+                         * it is the same call gameplay code makes, which is the point of showing it.
+                         */
+                        EditorGUI.BeginChangeCheck();
+                        float clipSpeed = EditorGUILayout.FloatField(
+                            Application.isPlaying ? first.GetClipSpeed(i) : 1f, GUILayout.Width(44f));
+                        if (EditorGUI.EndChangeCheck())
+                        {
+                            foreach (UnityEngine.Object selected in targets)
+                                ((VATAnimator)selected).SetClipSpeed(i, clipSpeed);
+                        }
+
+                        if (GUILayout.Button("once", EditorStyles.miniButton, GUILayout.Width(48f)))
+                        {
+                            foreach (UnityEngine.Object selected in targets)
+                                ((VATAnimator)selected).PlayOnce(i);
+                        }
+
                         if (GUILayout.Button("snap", EditorStyles.miniButton, GUILayout.Width(48f)))
                         {
                             foreach (UnityEngine.Object selected in targets)
                                 ((VATAnimator)selected).Snap(i);
                         }
+                    }
+                }
+
+                EditorGUILayout.Space();
+
+                // Reads the first selection, because the button has to say one thing and a mixed
+                // selection is far rarer than wanting to stop everything selected at once.
+                bool frozen = first.IsFrozen;
+                if (GUILayout.Button(frozen ? "Resume" : "Freeze"))
+                {
+                    foreach (UnityEngine.Object selected in targets)
+                    {
+                        VATAnimator animator = (VATAnimator)selected;
+                        if (frozen) animator.Resume();
+                        else animator.Freeze();
                     }
                 }
             }

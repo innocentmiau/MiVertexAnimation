@@ -39,7 +39,6 @@ CBUFFER_START(UnityPerMaterial)
     float  _VATTextureWidth;
     float  _VATTextureHeight;   // height of ONE array slice
     float  _VATRowsPerFrame;
-    float  _VATSpeed;
     float  _VATPhaseVariation;
     float  _VATFrameBlend;
     float  _VATBlendDuration;
@@ -72,8 +71,24 @@ UNITY_INSTANCING_BUFFER_START(VATInstance)
     UNITY_DEFINE_INSTANCED_PROP(float, _VATPreviousClip)  // clip being faded out
     UNITY_DEFINE_INSTANCED_PROP(float, _VATPreviousStart)
     UNITY_DEFINE_INSTANCED_PROP(float, _VATBlendStart)    // _Time.y when the fade began
-    UNITY_DEFINE_INSTANCED_PROP(float, _VATClamp)         // 1 = play once and hold the last frame
-    UNITY_DEFINE_INSTANCED_PROP(float, _VATPreviousClamp)
+    /*
+     * Per instance rather than per material, so one crowd at one material can run at a speed each -
+     * a character sprinting while the one beside it walks, on the same clip and in the same batch.
+     * It is still declared in the shader's Properties, so a renderer nothing writes a property block
+     * for takes the material's value and behaves exactly as it did when this lived in the CBUFFER.
+     *
+     * Speed scales elapsed time, so changing it moves the clip somewhere else in the same instant
+     * unless the start time moves with it. VATAnimator does that; a driver of your own has to.
+     */
+    UNITY_DEFINE_INSTANCED_PROP(float, _VATSpeed)
+    /*
+     * Where playback stops, as a fraction of the clip:
+     *     0             loop, which is also what an instance nothing has written reads as
+     *     >= 1          play through once and stop on the last baked frame
+     *     0 < hold < 1  stop at that point in the clip, which is how a freeze holds the pose on screen
+     */
+    UNITY_DEFINE_INSTANCED_PROP(float, _VATHold)
+    UNITY_DEFINE_INSTANCED_PROP(float, _VATPreviousHold)
     /*
      * Per section, and behind the keyword so a bake without sections pays nothing per instance.
      *
@@ -166,17 +181,28 @@ uint VAT_ClampClip(float clip)
     return (uint)clamp(clip, 0.0, max(_VATClipCount - 1.0, 0.0));
 }
 
-// Position within the clip, in frames: 0 .. totalFrames.
-// clamped != 0 holds the last frame instead of wrapping, so a one-shot can be faded out of
-// without the clip restarting underneath the fade. Stopping just short of 1 keeps
-// floor(phase) inside the baked range.
-float VAT_Phase(float2 info, float startTime, float phaseOffset, float clamped)
+/*
+ * Position within the clip, in frames: 0 .. totalFrames.
+ *
+ * A hold stops the clip somewhere instead of wrapping it. A one-shot needs that so nothing restarts
+ * underneath the fade out of it, and a freeze needs it so a body stays on the ground.
+ *
+ * Holding the end lands on the last frame exactly rather than a fraction short of it. A phase of
+ * 0.999 * frames looks like the last frame and is not: floor() picks frame N-1, frac() comes out at
+ * almost 1, and VAT_SampleClip wraps the frame after N-1 round to 0 - so with frame blending on, a
+ * death animation asked to hold its last pose blends almost the whole way back to its first one and
+ * stands up again.
+ */
+float VAT_Phase(float2 info, float startTime, float phaseOffset, float hold, float speed)
 {
     float loopsPerSecond = info.y / info.x;
-    float t = (_Time.y - startTime) * loopsPerSecond * _VATSpeed + phaseOffset;
+    float t = (_Time.y - startTime) * loopsPerSecond * speed + phaseOffset;
 
-    float cycle = clamped > 0.5 ? min(t, 0.999999) : frac(t);
-    return cycle * info.x;
+    if (hold <= 0.0) return frac(t) * info.x;
+
+    // A held clip runs on an unwrapped t, so min() is the whole of what stops it - and once stopped
+    // the phase is a constant, which is why a corpse is exactly where it fell an hour of _Time.y later.
+    return min(t * info.x, hold >= 1.0 ? info.x - 1.0 : hold * info.x);
 }
 
 // Vertex N of frame F sits at x = N % width, y = floor(N / width) + rowsPerFrame * F.
@@ -405,10 +431,11 @@ void VAT_Sample(uint vertexID, float3 meshNormalOS, float4 sectionMask,
 
     uint  clip      = VAT_ClampClip(UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATClip));
     float clipStart = UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATClipStart);
-    float clipClamp = UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATClamp);
+    float clipHold  = UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATHold);
+    float speed     = UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATSpeed);
 
     float2 clipInfo = VAT_ClipInfo(clip);
-    float phase = VAT_Phase(clipInfo, clipStart, phaseOffset, clipClamp);
+    float phase = VAT_Phase(clipInfo, clipStart, phaseOffset, clipHold, speed);
     VAT_SampleClip(vertexID, clip, clipInfo, phase, positionOS, normalOS);
 
     float blendStart = UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATBlendStart);
@@ -422,13 +449,13 @@ void VAT_Sample(uint vertexID, float3 meshNormalOS, float4 sectionMask,
     {
         uint  previousClip  = VAT_ClampClip(UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATPreviousClip));
         float previousStart = UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATPreviousStart);
-        float previousClamp = UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATPreviousClamp);
+        float previousHold  = UNITY_ACCESS_INSTANCED_PROP(VATInstance, _VATPreviousHold);
 
         float2 previousInfo = VAT_ClipInfo(previousClip);
         float3 previousPosition, previousNormal;
 
         VAT_SampleClip(vertexID, previousClip, previousInfo,
-            VAT_Phase(previousInfo, previousStart, phaseOffset, previousClamp),
+            VAT_Phase(previousInfo, previousStart, phaseOffset, previousHold, speed),
             previousPosition, previousNormal);
 
         positionOS = lerp(previousPosition, positionOS, blend);

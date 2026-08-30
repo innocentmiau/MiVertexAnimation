@@ -5,6 +5,38 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0]
+
+### Added
+
+- `VATAnimator.Freeze()` and `Resume()`, which hold the pose that is on screen and then carry on from it - a hit stop, a pause menu, a character caught mid-stride. `Freeze(normalizedTime)` seeks to a point in the clip and holds there instead. `Resume` moves the clip's start time forward by however long it was held, so nothing jumps and no time is lost, and a freeze during a cross-fade stops both clips while letting the fade itself finish onto the frozen pose. A frozen animator drops off the driver, so a field of bodies costs per frame what a field of loopers costs, which is nothing.
+
+- **Loop** on the `VATAnimator` inspector, on by default. Off plays the starting clip once and holds its last frame, for a prop or a corpse that spawns already in that state and never gets a `Play` call. `Play` still loops and `PlayOnce` still holds whatever it is set to - it describes the clip the component starts on, not the component. A clip that is not looping is never given a random start phase, which would have dropped it part way through the single run it gets.
+
+- `VATAnimator.IsFrozen` and `NormalizedTime`, the second being where the current clip is as a fraction of one cycle.
+
+- `VATAnimator.Speed`, and a **Speed** field on the inspector, multiplying playback for one instance across every clip.
+
+- `VATAnimator.SetClipSpeed(clip, speed)` and `GetClipSpeed`, by index or by name, which give one clip a speed of its own whether or not it is the clip playing. This is the one for a run cycle that has to keep up with a movement speed: set it when the movement speed changes and idle, attack and death stay at 1, with nothing left running that has to check which clip is on screen. Setting the speed of a clip that is not playing touches no property block at all. `Play(clip, speed)` and `PlayOnce(clip, returnTo, speed)` reach the same thing from the call that starts the clip, and `CurrentSpeed` reports what the two layers multiply out to.
+
+- A **once** button beside every clip in the inspector, a per-clip speed field beside it in play mode, and a **Freeze** / **Resume** button under the list, so all of it can be judged without writing a test script.
+
+### Changed
+
+- `_VATSpeed` moved out of the material constant buffer and into the per-instance buffer, so speed is per instance and a crowd sharing one material can hold a speed each without leaving the batch. It is still declared in both shaders' Properties, so a renderer nothing writes a property block for takes the material's value and behaves exactly as before; a renderer with a `VATAnimator` now has its speed written for it, and the material's **Playback Speed** is the fallback for one without. `VAT_Phase` in `VAT_Core.hlsl` takes the speed as an argument rather than reading the global.
+
+  Writing `_VATSpeed` through a `MaterialPropertyBlock` was the only way to vary speed before this, and it had two costs that were not obvious: the property lived in `UnityPerMaterial`, so writing it per renderer gave that renderer its own material state and cost a draw call, and speed scales elapsed time, so every change jumped the clip to a different pose - a run cycle seven seconds old moves about 16% of the clip on a change from 1.0 to 1.8. `VATAnimator` moves the clip's start time by the same ratio in the same instant now, which cancels the jump exactly.
+
+- The per-instance `_VATClamp` and `_VATPreviousClamp` are now `_VATHold` and `_VATPreviousHold`, and carry where playback stops as a fraction of the clip rather than a flag: `0` loops, `>= 1` stops on the last baked frame, anything between stops there. Zero still means looping, because that is what an instance nothing has written reads as, so a material driven by hand and never given the property behaves exactly as before. Nothing in a bake stores either name - they are written at runtime through a `MaterialPropertyBlock` - so no material, prefab or clip set needs re-baking. Only a driver of your own that wrote `_VATClamp` directly has to change, and `VAT_Phase` in `VAT_Core.hlsl` takes the fraction in place of the old flag.
+
+### Fixed
+
+- A clip asked to hold its last frame stood back up again when **Frame Blend** was on. Holding was expressed as a phase of `0.999999` of the clip, which is not the last frame but almost all of the way to it: `floor` picked frame N-1, `frac` came out just under 1, and frame blending wraps the frame after N-1 round to frame 0 - so a death animation held a pose that was 99.99% its *first* one. It lands on the last frame exactly now, leaving frame blending nothing to blend toward. This is why the roadmap still asked for a way to stop a clip at its end when `PlayOnce` looked like it already did it.
+
+- Clip events and `ClipFinished` ignored playback speed. Both were worked out from the clip's baked length while the shader was running it at `_VATSpeed`, so anything not playing at 1 fired its markers at the wrong pose and ended its one-shots at the wrong moment. They read the same speed the shader does now.
+
+- `VATAnimator` reported the wrong position for a one-shot that had already finished. `NormalizedTime` and the event bookkeeping decided between clamping and wrapping on whether a one-shot was still in flight, and a finished one is not, so asking where it was started answering with a cycle it had never begun.
+
 ## [1.3.1]
 
 ### Added

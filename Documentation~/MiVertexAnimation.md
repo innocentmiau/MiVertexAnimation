@@ -287,8 +287,8 @@ animator.PlayOnce("Attack", returnTo: "Idle");   // fades back when it ends
 animator.PlayOnce("Die");                        // holds the last pose
 ```
 
-A one-shot **holds its final frame** rather than wrapping (the shader clamps instead of looping),
-so nothing restarts underneath the fade back.
+A one-shot **holds its final frame** rather than wrapping, so nothing restarts underneath the fade
+back. "Holding a pose" below covers that and the other way a clip stops, which is freezing it.
 
 Two events to hook:
 
@@ -368,6 +368,81 @@ animator.Play(3, true);    // restart even if slice 3 is already playing
 switch began. The shader fades over **Clip Blend Duration** (a material property, set at bake time
 and editable afterwards) and samples the outgoing clip only while the fade is running - the branch
 is uniform, so a settled instance pays nothing extra.
+
+### Holding a pose
+
+Two ways a clip stops instead of coming round again.
+
+**On its last frame**, which is what a death needs - the body stays on the ground and no separate
+one-frame clip has to be baked for it:
+
+```csharp
+animator.PlayOnce("Die");            // no returnTo, so it stays on the last frame
+```
+
+Turn **Loop** off on the component to do the same to whatever clip it starts on, for a prop or a
+corpse that spawns already in that state. `Play` still loops and `PlayOnce` still holds whatever
+the toggle says - it describes the starting clip, not the component.
+
+**On the pose that is on screen**, for a hit stop, a pause menu, or anything that should carry on
+afterwards from where it was:
+
+```csharp
+animator.Freeze();                   // holds whatever is showing
+animator.Resume();                   // carries on from it
+
+animator.Freeze(0.5f);               // seek to the middle of the clip and hold there
+```
+
+`Freeze` reads where the clip is from the **Clip Set**, so an animator without one holds its first
+frame rather than the pose on screen. `Resume` moves the clip's start time forward by however long
+it was held, so nothing jumps and no time is lost. `Play`, `PlayOnce` and `Snap` all clear a freeze,
+and freezing during a cross-fade stops both clips - the fade itself still finishes, onto the frozen
+pose.
+
+Either way the animator **drops off the driver** while it is held, so a field of bodies costs the
+same per frame as a field of loopers, which is nothing.
+
+`IsFrozen` and `NormalizedTime` report the state, the second being where the clip is as a fraction
+of one cycle.
+
+Underneath, both are one per-instance value, `_VATHold`, which is where playback stops as a fraction
+of the clip: `0` loops, `>= 1` stops on the last baked frame, and anything between stops there. Zero
+has to mean looping, because that is what an instance nothing has written reads as. A shader built on
+`VAT_Core.hlsl` gets this from `VAT_Phase` and needs no code of its own.
+
+### Speed
+
+Speed is per instance, so one crowd on one material can have a character sprinting beside one that
+walks, in the same batch. Two layers multiply:
+
+```csharp
+animator.Speed = 1.5f;                  // this instance, every clip
+animator.SetClipSpeed("Run", 1.3f);     // this clip, whether or not it is playing now
+animator.Play("Run", 1.3f);             // same thing, from the call that starts it
+animator.PlayOnce("Die", null, 0.5f);   // a slow-motion death
+```
+
+`SetClipSpeed` is the one for a run cycle that has to keep up with a movement speed. Set it when the
+movement speed changes and forget it: it applies to that clip alone, so idle, attack and death stay
+at 1 and **nothing has to check which clip is on screen**. Setting the speed of a clip that is not
+playing costs nothing at all - no property block is touched until that clip comes round.
+
+Both are multipliers on the rate baked into the clip, and both are clamped to a small positive
+minimum. **Speed 0 does not stop playback** - `Freeze` does that.
+
+Changing speed **keeps the clip where it is**. Position in a clip is elapsed time times speed, so
+raising the speed would otherwise scale everything already elapsed and jump the character to a pose
+it was never heading for - a run cycle 7 seconds old jumps about 16% of the clip on a 1.0 to 1.8
+change. The animator moves the clip's start time by the same ratio in the same instant, which
+cancels it exactly.
+
+Clip events and `ClipFinished` are read off the same speed, so a clip at half rate fires its hit
+marker where it looks like it should rather than twice as early.
+
+> Driving `_VATSpeed` through a `MaterialPropertyBlock` yourself does none of this. It is what the
+> animator writes, so it will be overwritten; before 1.4.0 it also sat in the material's constant
+> buffer, where writing it per renderer broke the instanced batch and cost a draw call each.
 
 ### Per-instance state
 
@@ -496,7 +571,7 @@ texture fetch into the shadow and depth passes.
 | Property | What it does |
 |---|---|
 | `Phase Variation` | 0 = every instance in lockstep. Raise it to de-sync a crowd. Derived from world position, so it costs nothing and keeps the SRP Batcher working. |
-| `Playback Speed` | Multiplier on the loop rate. |
+| `Playback Speed` | Multiplier on the loop rate, for renderers with no `VATAnimator`. One that has an animator writes its own, and the **Speed** field on the component is the one to reach for. |
 | `Frame Blend` | Interpolates between frames. Lets you bake with a high frame step and still look smooth - at 4 texture fetches per vertex instead of 2. |
 
 ## LOD
