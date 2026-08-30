@@ -5,6 +5,18 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1]
+
+### Added
+
+- `VATTime`, the one clock everything here is timed against. It is whatever the render pipeline last put in `_Time.y`, which is `Time.time` in play mode and `Time.realtimeSinceStartup` in the editor. Anything that writes `_VATClipStart`, `_VATBlendStart` or a section's start time by hand - a driver of your own, or a shader built on `VAT_Core.hlsl` - has to stamp it with this, or it disagrees with the `_Time.y` it will be compared against.
+
+### Fixed
+
+- One-shots, cross-fades and section turns did not play at all in a build with more than one scene in it, and looping clips started from an arbitrary point. `VATAnimator` stamped its playback state with `Time.timeSinceLevelLoad`, and the shader compares those stamps against `_Time.y`, which URP fills from `Time.time`. Those two agree only in the first scene of a run, which is the scene anyone tests in the editor, and after that `timeSinceLevelLoad` resets to zero on every scene load while `_Time.y` carries on counting from application start. A build that opens on a menu and loads the game from there was handing the shader clip start times a whole menu's worth of seconds in the past. `PlayOnce` clamps rather than wraps, so a one-shot opened already holding its last frame and an attack never animated at all; a cross-fade arrived finished; and clip events fired against a pose that was not the one on screen. Looping clips survived it, because `frac()` turns a wrong start time into a wrong phase and nothing worse, which is what kept the whole thing out of sight until a build had a second scene in it. Both components read `VATTime.Now` now.
+
+- `VATSectionDriver` used `Time.time`, which is the right clock in play mode and the wrong one in the editor, where `_Time.y` comes from `Time.realtimeSinceStartup` instead. `TurnTo`, `Release` and the inspector's own posing therefore snapped straight to the target outside play mode rather than easing into it, so a duration could not be judged without entering play. Same clock, same fix.
+
 ## [1.3.0]
 
 ### Added

@@ -108,7 +108,7 @@ namespace MiVertexAnimation
         {
             _renderers = GetComponentsInChildren<Renderer>(true);
 
-            float now = Now;
+            float now = VATTime.Now;
             // Offsetting the start time backwards lands the loop at an arbitrary phase. Kept small:
             // the shader does frac() on this, and large values lose precision there.
             _clipStart = randomizeStartPhase ? now - UnityEngine.Random.value * 100f : now;
@@ -150,7 +150,7 @@ namespace MiVertexAnimation
             HandOverToPrevious();
 
             clipIndex = clip;
-            _clipStart = Now;
+            _clipStart = VATTime.Now;
             _clamp = false;
 
             BeginPlayback(false, -1);
@@ -183,7 +183,7 @@ namespace MiVertexAnimation
             HandOverToPrevious();
 
             clipIndex = Mathf.Clamp(clip, 0, ClipCount - 1);
-            _clipStart = Now;
+            _clipStart = VATTime.Now;
             _clamp = true;
 
             BeginPlayback(true, returnTo);
@@ -213,7 +213,7 @@ namespace MiVertexAnimation
         public void Snap(int clip)
         {
             clipIndex = Mathf.Clamp(clip, 0, ClipCount - 1);
-            _clipStart = Now;
+            _clipStart = VATTime.Now;
             _clamp = false;
             _previousClip = clipIndex;
             _previousStart = _clipStart;
@@ -260,7 +260,7 @@ namespace MiVertexAnimation
             _previousClip = clipIndex;
             _previousStart = _clipStart;
             _previousClamp = _clamp;
-            _blendStart = Now;
+            _blendStart = VATTime.Now;
         }
 
         private int ResolveName(string clipName)
@@ -308,7 +308,7 @@ namespace MiVertexAnimation
             float length = clipSet.LengthAt(clipIndex);
             if (length <= 0f) return 0f;
 
-            float raw = (Now - _clipStart) / length;
+            float raw = (VATTime.Now - _clipStart) / length;
             return _oneShot ? Mathf.Clamp01(raw) : raw - Mathf.Floor(raw);
         }
 
@@ -332,7 +332,7 @@ namespace MiVertexAnimation
             bool fromStart = _fireFromStart;
             _fireFromStart = false;
 
-            float raw = (Now - _clipStart) / length;
+            float raw = (VATTime.Now - _clipStart) / length;
 
             if (_oneShot)
             {
@@ -395,13 +395,6 @@ namespace MiVertexAnimation
                 if (started && t <= to) ClipEventFired.Invoke(this, events[i]);
             }
         }
-
-        /*
-         * Must be the same clock the shader's _Time.y runs on.
-         * EditorApplication.timeSinceStartup is a different one, editor uptime, often tens of thousands of seconds,
-         * and the gap between them wrecks the precision of the frac() in the shader.
-         */
-        private static float Now => Time.timeSinceLevelLoad;
 
     }
 }

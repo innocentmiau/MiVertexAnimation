@@ -379,6 +379,28 @@ it creates.
 Set **Phase Variation** to 0 when using `VATAnimator` - it staggers instances by randomising each
 one's clip start time instead, which is controllable and survives clip switches.
 
+### The clock
+
+Every timestamp this package writes into a material is compared against `_Time.y` inside the shader,
+so both ends have to be read off the same clock. URP fills `_Time` from
+`Application.isPlaying ? Time.time : Time.realtimeSinceStartup`, and `VATTime.Now` mirrors that:
+
+```csharp
+float now = VATTime.Now;   // the value _Time.y will be holding when this frame draws
+```
+
+`Time.timeSinceLevelLoad` is the one that looks right and is not. It agrees with `Time.time` only in
+the first scene of a run, and resets to zero on every scene load after that while `_Time.y` carries
+on counting from application start. Stamp a clip start with it and a build that opens on a menu
+plays the game scene with every start time a whole menu's worth of seconds in the past: one-shots
+hold their last frame from the moment they begin, cross-fades arrive finished, and section turns
+snap.
+
+None of this matters unless you are writing the state yourself. `VATAnimator` and `VATSectionDriver`
+already use it. It matters if you drive `_VATClipStart`, `_VATBlendStart` or a section's
+`FromOff.w` from your own code, or if you write a shader on top of `VAT_Core.hlsl` that compares
+anything to `_Time.y`.
+
 ## Objects with several SkinnedMeshRenderers
 
 When the window finds more than one SkinnedMeshRenderer it offers three modes.

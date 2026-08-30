@@ -100,7 +100,7 @@ namespace MiVertexAnimation
             // the component still runs there so the inspector can pose a section without entering play.
             if (!_tracking || !Application.isPlaying) return;
 
-            float now = Time.time;
+            float now = VATTime.Now;
             bool stillTracking = false;
 
             for (int i = 0; i < MAX_SECTIONS; i++)
@@ -160,7 +160,7 @@ namespace MiVertexAnimation
             int index = IndexOf(sectionName);
             if (index < 0) return;
 
-            float now = Time.time;
+            float now = VATTime.Now;
             VATSectionState state = _states[index];
 
             // Where it is NOW becomes where the new transition starts, so redirecting a turn that is
@@ -193,7 +193,7 @@ namespace MiVertexAnimation
             if (!state.Tracking)
             {
                 // Picks up from wherever a TurnTo had got to, rather than jumping to the target.
-                Quaternion current = state.RotationAt(Time.time);
+                Quaternion current = state.RotationAt(VATTime.Now);
                 state.FromRotation = current;
                 state.ToRotation = current;
             }
