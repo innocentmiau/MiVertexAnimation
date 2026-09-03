@@ -5,6 +5,18 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1]
+
+### Fixed
+
+- `VATAnimatorDriver.Update` threw `ArgumentOutOfRangeException` out of `List.RemoveAt` whenever a one-shot finished into a clip that has no events on it, which is to say whenever an ordinary `PlayOnce("Attack", "Idle")` completed. Ticking an animator can change who wants to be ticked: a one-shot reaching its end raises `ClipFinished` and then starts its return clip from inside `Tick`, and starting a plain looping clip with nothing to watch unregisters the animator. So the driver's own list lost an entry midway through the pass that was walking it, and the pass then removed a second entry by an index that no longer meant anything, or ran off the end. Removal is deferred while a pass is running now: a slot being dropped is nulled instead of taken out, so every index means the same thing for the whole pass, and the list is closed up once afterwards. That covers anything else a listener does from inside a clip event or a `ClipFinished` handler, which was equally unsafe before and equally silent about it - freezing the animator, playing something else, pooling or destroying the entity it belongs to.
+
+- The driver could keep hold of animators from a previous run when entering play mode with domain reloading turned off. It clears itself now.
+
+### Changed
+
+- Registering and unregistering with the driver are a subscript rather than a scan. Each animator remembers where the driver is holding it, so joining its list and dropping out again cost the same whatever else is playing. `Contains` on the way in and `Remove` on the way out were a pass over every animator with something to do, on every clip start and every clip finish, which is unnoticeable while a handful of one-shots are ever in flight at once and grows with the square of the crowd once thousands of bodies are all playing an attack. Removal outside a tick is a swap back, and the holes a tick leaves are closed in one sweep after it rather than one shift of the list per body.
+
 ## [1.4.0]
 
 ### Added

@@ -123,6 +123,19 @@ namespace MiVertexAnimation
         private float _lastNormalized;
         private bool _fireFromStart;
 
+        /*
+         * Where the driver is holding this animator, so joining its list and dropping out of it are a subscript
+         * rather than a scan. A scan was fine while a handful of one-shots were ever in flight at once, and is not
+         * once a crowd is playing an attack: every start and every finish walked the whole list, so what the driver
+         * cost grew with the square of how many bodies were doing something.
+         *
+         * Minus one means the driver is not holding it. Pending is tracked apart from it because a registration
+         * waits a frame before it lands, and anything that unregisters inside that frame has to be found in the
+         * queue instead of in the list.
+         */
+        internal int DriverIndex = -1;
+        internal bool DriverPending;
+
         /// <summary>Assigning a new value cross-fades into that clip, looping.</summary>
         public int Clip
         {
