@@ -179,6 +179,7 @@ namespace MiVertexAnimation
                 VATClipRange theirs = other.clipRanges[i];
 
                 if (mine.clip != theirs.clip || mine.clipName != theirs.clipName) return false;
+                if (mine.bakeName != theirs.bakeName) return false;
                 if (mine.startFrame != theirs.startFrame || mine.endFrame != theirs.endFrame) return false;
                 if (mine.frameStep != theirs.frameStep || mine.trimLoopFrame != theirs.trimLoopFrame) return false;
             }

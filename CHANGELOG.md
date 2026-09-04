@@ -5,6 +5,20 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0]
+
+### Added
+
+- **A name of your own for every baked clip.** Each clip in the baker's list draws its name as a field now, and whatever is in it is what the slice is baked under and what `Play` matches. Clips arrive named by whoever exported the FBX, so gameplay code ends up writing `Play("Combat_Walk_1H_Attack")` when it means `Play("Attack")`, and the only way to shorten that before was to rename the clip on the FBX importer, which changes it for every other user of that file and cannot be done per bake at all. The rename is stored on the clip's range, keyed by clip reference like everything else there, so it survives a re-bake, an undo, and a settings asset saved and loaded again. Leaving the field on the clip's own name stores nothing rather than freezing that name, so renaming the clip on the importer afterwards still carries through, and the button beside the field is the same thing as typing the clip's name back in. Only the slice is renamed: the output files still take their names from File Name in the Output section, so a rename cannot orphan the assets a previous bake wrote.
+
+- **The baked clip set has an inspector of its own**, which is where a name can be fixed after a bake without re-baking a texture to change a string. The slice names are editable, and the frames, rate and length beside them are shown but locked - they describe the texture that was written, and the default inspector let them be edited into disagreeing with it silently. Each slice's markers are still there to edit as they were. The next bake writes whatever the baker's clip list says, so a name changed only here comes back; the inspector says so.
+
+- **A warning when two clips would bake under the same name**, in the baker before the bake and in the clip set after it. `Play` matches the first slice of a name, so the second one could only ever be reached by its index, and nothing said so. Two FBX files can each legitimately export an `Idle`, so this is a warning and not a refusal. It was on the roadmap.
+
+### Changed
+
+- Saving events into an existing clip set without re-baking resolves the slice by the name it was baked under rather than the source clip's name, and the bake log names each slice as it was baked, with the source clip beside it when the two differ.
+
 ## [1.4.1]
 
 ### Fixed

@@ -561,8 +561,12 @@ namespace MiVertexAnimation
 
                 if (_clips.Length == 1)
                 {
-                    // Nothing to choose between.
-                    EditorGUILayout.LabelField("Clip", _clips[0].name);
+                    // Nothing to choose between, but the one clip can still be baked under another name.
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        EditorGUILayout.PrefixLabel("Clip");
+                        DrawBakeNameField(_clips[0]);
+                    }
                 }
                 else
                     DrawClipSelection();
@@ -882,11 +886,78 @@ namespace MiVertexAnimation
                         }
 
                         EditorGUILayout.LabelField(i.ToString(), GUILayout.Width(16f));
-                        EditorGUILayout.LabelField(_bakeClips[i].name);
+                        DrawBakeNameField(_bakeClips[i]);
 
                         if (GUILayout.Button("preview", EditorStyles.miniButton, GUILayout.Width(58f)))
                             _clipIndex = System.Array.IndexOf(_clips, _bakeClips[i]);
                     }
+                }
+            }
+
+            DrawDuplicateNameWarning();
+        }
+
+        /*
+         * A field rather than a label because this string is the whole interface to the clip from code:
+         * a clip exported as "Combat_Walk_1H_Attack" turns into Play("Combat_Walk_1H_Attack") in every
+         * script that touches it, and that is a long thing to type correctly from memory.
+         * The alternative is renaming the clip on the FBX importer, which changes it for every other
+         * user of that file and cannot be done per bake at all.
+         *
+         * Delayed so that a rename is one undo step rather than one per keystroke, and so the duplicate
+         * warning below is not shouting at half typed names.
+         */
+        /// <summary>
+        /// One clip's editable slice name, with a reset button back to the name the clip itself carries.
+        /// </summary>
+        private void DrawBakeNameField(AnimationClip clip)
+        {
+            string current = BakeName(clip);
+            bool renamed = current != clip.name;
+
+            EditorGUI.BeginChangeCheck();
+            string edited = EditorGUILayout.DelayedTextField(current);
+            if (EditorGUI.EndChangeCheck()) SetBakeName(clip, edited);
+
+            // Tinted like the other buttons that throw an edit away, because that is all it does.
+            using (new EditorGUI.DisabledScope(!renamed))
+            {
+                if (VATUi.Button(VATUi.Content("reset",
+                        $"Reset the name to '{clip.name}', the one the clip itself carries.",
+                        VATIcons.First("TreeEditor.Trash", "Toolbar Minus")), VATUi.DESTRUCTIVE,
+                        EditorStyles.miniButton, GUILayout.Width(64f)))
+                {
+                    SetBakeName(clip, string.Empty);
+                    GUIUtility.ExitGUI();
+                }
+            }
+        }
+
+        /*
+         * Two slices of one name is not an error the bake can refuse: an FBX pair can legitimately both
+         * export an "Idle", and only the person baking knows which one gameplay meant.
+         * What it cannot do is stay quiet, because Play matches the first slice of that name and the
+         * second one is then unreachable by name for the life of the bake.
+         */
+        /// <summary>
+        /// Warns when two clips would be baked under the same name, whether typed or inherited.
+        /// </summary>
+        private void DrawDuplicateNameWarning()
+        {
+            for (int i = 0; i < _bakeClips.Count; i++)
+            {
+                for (int j = i + 1; j < _bakeClips.Count; j++)
+                {
+                    if (!string.Equals(BakeName(_bakeClips[i]), BakeName(_bakeClips[j]),
+                            System.StringComparison.OrdinalIgnoreCase)) continue;
+
+                    EditorGUILayout.HelpBox(
+                        $"Slices {i} and {j} are both called '{BakeName(_bakeClips[i])}'. Play() matches " +
+                        $"the first one, so slice {j} could only be reached by its index. Rename one of " +
+                        "them above.",
+                        MessageType.Warning);
+
+                    return;
                 }
             }
         }
@@ -921,8 +992,11 @@ namespace MiVertexAnimation
             for (int i = 0; i < bakeClips.Count; i++)
             {
                 VATClipRange range = RangeFor(bakeClips[i]);
-                tabs[i] = new GUIContent(bakeClips[i].name,
-                    $"{bakeClips[i].name}\nframes {range.startFrame} to {range.endFrame}, " +
+                string baked = range.BakeName;
+
+                tabs[i] = new GUIContent(baked,
+                    (baked == bakeClips[i].name ? baked : $"{baked}  (clip '{bakeClips[i].name}')") +
+                    $"\nframes {range.startFrame} to {range.endFrame}, " +
                     $"step {range.frameStep}, {range.Frames} baked");
             }
 
@@ -1444,7 +1518,7 @@ namespace MiVertexAnimation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField($"'{clip.name}'  |  {entry.events.Count} event(s)" +
+                EditorGUILayout.LabelField($"'{BakeName(clip)}'  |  {entry.events.Count} event(s)" +
                                            (entry.authored ? "  |  overrides the clip" : ""),
                     EditorStyles.miniLabel);
 
@@ -1664,11 +1738,11 @@ namespace MiVertexAnimation
                 return;
             }
 
-            int slice = SliceFor(set, clip, bakeClips);
+            int slice = SliceFor(set, clip, bakeClips, BakeName(clip));
             if (slice < 0)
             {
                 EditorGUILayout.HelpBox(
-                    $"'{clip.name}' is not a slice of {set.name} yet, so there is nothing to write into. " +
+                    $"'{BakeName(clip)}' is not a slice of {set.name} yet, so there is nothing to write into. " +
                     "Bake with this clip in the set first.",
                     MessageType.Warning);
                 return;
@@ -1684,7 +1758,7 @@ namespace MiVertexAnimation
             set.clips[slice].events = entry.events.ToArray();
             EditorUtility.SetDirty(set);
             AssetDatabase.SaveAssets();
-            Debug.Log($"[VAT] Saved {entry.events.Count} event(s) for '{clip.name}' into {path}");
+            Debug.Log($"[VAT] Saved {entry.events.Count} event(s) for '{BakeName(clip)}' into {path}");
         }
 
         /*
@@ -1698,13 +1772,15 @@ namespace MiVertexAnimation
         /// <param name="set">The clip set being written to.</param>
         /// <param name="clip">The clip whose events are being saved.</param>
         /// <param name="bakeClips">The current bake set, whose order the slices were written in.</param>
+        /// <param name="bakeName">The name that clip's slice was baked under, which is what the set holds.</param>
         /// <returns>The slice index, or -1 when that clip is not in the set.</returns>
-        private static int SliceFor(VATClipSet set, AnimationClip clip, List<AnimationClip> bakeClips)
+        private static int SliceFor(VATClipSet set, AnimationClip clip, List<AnimationClip> bakeClips,
+                                    string bakeName)
         {
             int position = bakeClips.IndexOf(clip);
-            if (position >= 0 && position < set.Count && set.NameAt(position) == clip.name) return position;
+            if (position >= 0 && position < set.Count && set.NameAt(position) == bakeName) return position;
 
-            return set.IndexOf(clip.name);
+            return set.IndexOf(bakeName);
         }
 
         /// <summary>
@@ -1734,7 +1810,7 @@ namespace MiVertexAnimation
             // The baked clip set is the live runtime data, so it wins over the source clip when there
             // is one. Before any bake there is nothing but the source clip to go on.
             VATClipSet set = AssetDatabase.LoadAssetAtPath<VATClipSet>(ClipSetPath(bakeClips));
-            VATClipEvent[] baked = set ? set.EventsAt(SliceFor(set, clip, bakeClips)) : null;
+            VATClipEvent[] baked = set ? set.EventsAt(SliceFor(set, clip, bakeClips, BakeName(clip))) : null;
 
             if (baked?.Length > 0) entry.events.AddRange(baked);
             else entry.events.AddRange(ImportSourceEvents(clip, _startFrame, BakedLength(clip, frames)));
@@ -3264,6 +3340,47 @@ namespace MiVertexAnimation
         }
 
         /*
+         * Read through FindRange rather than RangeFor, because drawing the clip list must not create a
+         * stored range for every clip in it. Anything CaptureState can see is an undo step, so a range
+         * invented while repainting would put a step on the stack that nobody asked for.
+         */
+        /// <summary>
+        /// The name a clip's slice is baked under, which is the clip's own name unless it was renamed.
+        /// </summary>
+        /// <param name="clip">The clip being baked.</param>
+        /// <returns>The name Play() will match, never empty for a real clip.</returns>
+        private string BakeName(AnimationClip clip)
+        {
+            if (!clip) return string.Empty;
+
+            VATClipRange range = FindRange(clip);
+            return range == null || string.IsNullOrWhiteSpace(range.bakeName) ? clip.name : range.bakeName.Trim();
+        }
+
+        /*
+         * Storing the clip's own name as an override would freeze it: rename the clip on the importer
+         * afterwards and the slice would keep the name it used to have, with nothing on screen saying why.
+         * Blank means "follow the clip", so typing the clip's own name back in is the same as reverting.
+         */
+        /// <summary>
+        /// Renames one clip's baked slice, or clears the rename when the name given is the clip's own.
+        /// </summary>
+        private void SetBakeName(AnimationClip clip, string value)
+        {
+            if (!clip) return;
+
+            string trimmed = (value ?? string.Empty).Trim();
+            if (trimmed == clip.name) trimmed = string.Empty;
+
+            VATClipRange existing = FindRange(clip);
+            if (existing == null && trimmed.Length == 0) return;
+            if (existing != null && (existing.bakeName ?? string.Empty) == trimmed) return;
+
+            RangeFor(clip).bakeName = trimmed;
+            MarkEdited();
+        }
+
+        /*
          * Answers for both modes, so the bake loop and the size estimate never have to know which one is on.
          * With per-clip off this hands back a throwaway built from the shared settings rather than storing
          * anything, which is what keeps turning the toggle off from quietly rewriting every stored range.
@@ -3283,6 +3400,7 @@ namespace MiVertexAnimation
             {
                 clip = clip,
                 clipName = clip.name,
+                bakeName = FindRange(clip)?.bakeName,
                 startFrame = singleClip ? _startFrame : 0,
                 endFrame = singleClip ? _endFrame : FrameCount(clip),
                 frameStep = _frameStep,
@@ -3301,6 +3419,7 @@ namespace MiVertexAnimation
                 {
                     clip = range.clip,
                     clipName = range.clipName,
+                    bakeName = range.bakeName,
                     startFrame = range.startFrame,
                     endFrame = range.endFrame,
                     frameStep = range.frameStep,
@@ -3387,6 +3506,7 @@ namespace MiVertexAnimation
                     clipBakes.Add(new VATClipBake
                     {
                         Clip = clip,
+                        Name = range.BakeName,
                         StartFrame = range.startFrame,
                         Frames = frames,
                         Step = range.frameStep,
@@ -3482,7 +3602,7 @@ namespace MiVertexAnimation
                     for (int f = 0; f < clipBake.Frames; f++)
                     {
                         EditorUtility.DisplayProgressBar("Baking VAT",
-                            $"{clipBake.Clip.name}  frame {f + 1}/{clipBake.Frames}",
+                            $"{clipBake.Name}  frame {f + 1}/{clipBake.Frames}",
                             (float)doneFrames++ / Mathf.Max(1, totalFrames));
 
                         // One sample per frame drives every part, so parts cannot drift out of sync.
@@ -3737,7 +3857,9 @@ namespace MiVertexAnimation
             for (int i = 0; i < clipBakes.Count; i++)
             {
                 VATClipBake c = clipBakes[i];
-                log.Append($"  slice {i}  '{c.Clip.name}'  {c.Frames} frames @ {c.Rate:0.##} fps");
+                log.Append($"  slice {i}  '{c.Name}'" +
+                           (c.Name == c.Clip.name ? string.Empty : $"  (clip '{c.Clip.name}')") +
+                           $"  {c.Frames} frames @ {c.Rate:0.##} fps");
                 if (c.Step > 1) log.Append($"  (every {c.Step} frames from {c.StartFrame})");
                 if (c.Trimmed) log.Append("  (trimmed duplicate loop frame)");
                 if (c.Duplicates > 0) log.Append($"  ({c.Duplicates} frames repeat the one before)");
@@ -3820,7 +3942,7 @@ namespace MiVertexAnimation
                 float length = c.Frames / Mathf.Max(c.Rate, .0001f);
                 return new VATClipEntry
                 {
-                    name = c.Clip.name,
+                    name = c.Name,
                     frames = c.Frames,
                     frameRate = c.Rate,
                     length = length,
@@ -3869,14 +3991,14 @@ namespace MiVertexAnimation
             // The slot this clip already occupied, when the set being updated still lines up with this
             // bake. Two clips of the same name each keep their own events instead of both taking the
             // first one's. Once the list has been reordered the name is all there is to go on.
-            if (slice >= 0 && slice < previous.Length && previous[slice].name == bake.Clip.name &&
+            if (slice >= 0 && slice < previous.Length && previous[slice].name == bake.Name &&
                 previous[slice].events != null)
             {
                 return previous[slice].events;
             }
 
             foreach (VATClipEntry entry in previous)
-                if (entry.name == bake.Clip.name && entry.events != null) return entry.events;
+                if (entry.name == bake.Name && entry.events != null) return entry.events;
 
             return imported;
         }

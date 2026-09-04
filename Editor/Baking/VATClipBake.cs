@@ -11,6 +11,11 @@ namespace MiVertexAnimation
     {
 
         public AnimationClip Clip;
+
+        // What this slice is called in the clip set, which is the clip's own name unless the baker
+        // renamed it. Resolved once here so the bake, the log and the event carry-over all agree.
+        public string Name;
+
         public int StartFrame;
         public int Frames;
         public float Rate;

@@ -1,7 +1,7 @@
 {
   "name": "com.andreleandrodev.mivertexanimation",
   "displayName": "MiVertexAnimation",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "unity": "6000.3",
   "unityRelease": "0f1",
   "description": "Bakes a SkinnedMeshRenderer and its AnimationClips into vertex animation textures, so a crowd animates on the GPU with no Animator, no bones and no per-frame CPU work. One window handles clips, per-clip frame ranges, animation events, mesh sections a script can still turn after the bake, and the material, mesh, prefab and clip set that go with them.",

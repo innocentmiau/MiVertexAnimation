@@ -51,7 +51,7 @@ In Unity, open **Window > Package Manager**, click **+ > Add package from git UR
 https://github.com/innocentmiau/MiVertexAnimation.git
 ```
 
-To pin a version, add a tag: `...MiVertexAnimation.git#v1.0.0`
+To pin a version, add a tag: `...MiVertexAnimation.git#v1.5.0`
 
 Or add it to `Packages/manifest.json` yourself:
 
@@ -67,6 +67,12 @@ Open **Tools > MiVertexAnimation > Baker**.
 2. Pick the clips to bake.
 3. Set an output folder and a name.
 4. Press **Bake**.
+
+The name beside each clip is what `Play()` will match, and it can be typed over. Clips arrive named by
+whoever exported the FBX, so `Combat_Walk_1H_Attack` can be baked as `Attack` without renaming the clip
+on the importer and changing it for everything else using that file. The **reset** button beside the field puts
+the clip's own name back. It renames the slice only, not the files: those follow **File Name** in the
+Output section.
 
 You get a prefab that plays, and the pieces it is made of:
 
@@ -102,6 +108,9 @@ animator.SetClipSpeed("Run", 1.3f);    // this clip only, playing or not
 ```
 
 Clips are addressed by name, matched ignoring case, so reordering them in the baker cannot silently repoint your code.
+The names are the ones in the baker's clip list, which are the source clips' own names until you type over them.
+A name can also be fixed afterwards on the `Name_Clips` asset without re-baking anything, though the next bake
+writes whatever the baker's list says, so change it in both places to keep it.
 
 A dead character needs no death pose baked as its own clip and no code left running: `PlayOnce("Die")`
 stops on the last frame of the death animation and stays there, and the animator drops off the driver
@@ -163,7 +172,6 @@ Nothing here is promised or scheduled, it is what seems worth building next, rou
 **Sections**
 
 - **Chained sections.** A spine that drives a head that drives the eyes. Sections are independent today: where two overlap, priority decides which one owns a vertex, and neither inherits the other's rotation.
-- **A warning when two baked clips share a name.** Clips are addressed by name at runtime, so two slices both called `Idle` cannot both be reached, and a one-shot ending on the second will not return to what it interrupted. The baker should say so before the bake rather than after.
 
 **Baking**
 
