@@ -162,6 +162,10 @@ namespace MiVertexAnimation
         private bool _saveSettings = true;
 
         [System.NonSerialized] private PreviewRenderUtility _preview;
+
+        // Set only while Reset Window is tearing this one down, so OnDisable knows not to hand its
+        // state to the window that replaces it.
+        [System.NonSerialized] private bool _resetting;
         [System.NonSerialized] private GameObject _previewInstance;
         [System.NonSerialized] private SkinnedMeshRenderer _previewRenderer;
         [System.NonSerialized] private Transform _previewRoot;
@@ -224,6 +228,29 @@ namespace MiVertexAnimation
         public static void ShowWindow()
         {
             GetWindow<VATBakerWindow>("Vertex Animation Baker").minSize = new Vector2(380, 480);
+        }
+
+        /*
+         * A window carries itself across an assembly reload by serializing its state, and updating the package
+         * is an assembly reload where the code reading that state is not the code that wrote it.
+         * A field that arrives missing or holding something the new code does not expect leaves the window
+         * drawing against a state that no longer makes sense, which IMGUI reports once per repaint
+         * rather than once, so the console fills with GUI errors that all describe the same thing.
+         *
+         * OnEnable already drops a snapshot it cannot read. This is the manual version of that,
+         * for when the window is wedged for a reason the restore could not see coming.
+         */
+        /// <summary>Closes the baker and opens it again with nothing carried across.</summary>
+        [MenuItem("Tools/MiVertexAnimation/Reset Baker Window")]
+        public static void ResetWindow()
+        {
+            foreach (VATBakerWindow open in Resources.FindObjectsOfTypeAll<VATBakerWindow>())
+            {
+                open._resetting = true;
+                open.Close();
+            }
+
+            ShowWindow();
         }
 
         /*
@@ -967,7 +994,7 @@ namespace MiVertexAnimation
                 AnimationClip picked = (AnimationClip)EditorGUILayout.ObjectField(
                     null, typeof(AnimationClip), false);
 
-                if (picked) AddClip(picked);
+                if (picked && AddClip(picked)) GUIUtility.ExitGUI();
             }
         }
 
@@ -991,25 +1018,38 @@ namespace MiVertexAnimation
 
             DragAndDrop.AcceptDrag();
 
+            bool added = false;
             foreach (Object dragged in DragAndDrop.objectReferences)
-                if (dragged is AnimationClip clip) AddClip(clip);
+                if (dragged is AnimationClip clip) added |= AddClip(clip);
 
             current.Use();
+
+            /*
+             * Every clip added is another row drawn, so the control count stops matching the one this pass
+             * laid out and the repaint that follows reads off the end of it.
+             * That is the GUI error the rest of this window already avoids the same way, at every other
+             * place an edit changes how many controls there are.
+             * Raised after the whole drag is taken, because this throws and a clip dropped alongside
+             * the first would otherwise never be looked at.
+             */
+            if (added) GUIUtility.ExitGUI();
         }
 
         /// <summary>
         /// Puts a clip in the pool and in the bake list, doing nothing when it is already baking.
         /// </summary>
         /// <param name="clip">The clip to add.</param>
-        private void AddClip(AnimationClip clip)
+        /// <returns>True when the clip was added, false when it was already in the bake list.</returns>
+        private bool AddClip(AnimationClip clip)
         {
-            if (!clip || _bakeClips.Contains(clip)) return;
+            if (!clip || _bakeClips.Contains(clip)) return false;
 
             if (IsAddedClip(clip) && !_addedClips.Contains(clip)) _addedClips.Add(clip);
 
             _bakeClips.Add(clip);
             RebuildClipPool();
             MarkEdited();
+            return true;
         }
 
         /// <summary>
@@ -1629,10 +1669,29 @@ namespace MiVertexAnimation
 
         private void OnEnable()
         {
-            // Restoring rather than rebuilding: the target comes back from the snapshot, which makes
-            // RestoreState call Refresh for the renderer and clip lists and then write every setting
-            // back over the top of it.
-            if (reloadState != null) RestoreState(reloadState);
+            /*
+             * Restoring rather than rebuilding: the target comes back from the snapshot, which makes
+             * RestoreState call Refresh for the renderer and clip lists and then write every setting
+             * back over the top of it.
+             *
+             * Guarded because the snapshot may have been written by a different version of this package,
+             * which is what updating it while the window is open amounts to.
+             * A restore that throws here would leave the window failing on every repaint and reporting it
+             * as a GUI error each time, which says nothing about the one thing that actually went wrong.
+             */
+            try
+            {
+                if (reloadState != null) RestoreState(reloadState);
+            }
+            catch (System.Exception failure)
+            {
+                Debug.LogWarning("[VAT] The baker could not read the state it saved before the last reload, " +
+                                 $"so it has opened clean. {failure.Message}");
+
+                reloadState = null;
+                _target = null;
+                Refresh();
+            }
 
             // Taken after the restore and before anything can be changed, so the first edit already
             // has a state to return to.
@@ -1643,7 +1702,8 @@ namespace MiVertexAnimation
         private void OnDisable()
         {
             // Runs before an assembly reload as well as on close, which is what makes this the handoff.
-            reloadState = CaptureState();
+            // A reset is the one close where handing the state on is exactly what is not wanted.
+            if (!_resetting) reloadState = CaptureState();
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             DestroyPreview();
         }
@@ -2947,11 +3007,12 @@ namespace MiVertexAnimation
             _rendererMode = (VATRendererMode)state.rendererMode;
             _rendererIndex = state.rendererIndex;
 
+            // A snapshot written by an older version of this package has no added clips in it at all.
             _addedClips.Clear();
-            _addedClips.AddRange(state.addedClips);
+            if (state.addedClips?.Count > 0) _addedClips.AddRange(state.addedClips);
 
             _bakeClips.Clear();
-            _bakeClips.AddRange(state.bakeClips);
+            if (state.bakeClips?.Count > 0) _bakeClips.AddRange(state.bakeClips);
             RebuildClipPool();
             _explicitClip = state.explicitClip;
             _frameRangeClip = state.frameRangeClip;
@@ -3336,13 +3397,17 @@ namespace MiVertexAnimation
             _rendererIndex = settings.rendererIndex;
             _rootIndex = settings.rootIndex;
 
+            // Both lists predate nothing and postdate something, so neither is assumed to be there:
+            // addedClips is newer than the asset format and clips is old enough to have been hand-edited.
             _addedClips.Clear();
-            foreach (AnimationClip clip in settings.addedClips)
-                if (clip && IsAddedClip(clip)) _addedClips.Add(clip);
+            if (settings.addedClips?.Count > 0)
+                foreach (AnimationClip clip in settings.addedClips)
+                    if (clip && IsAddedClip(clip)) _addedClips.Add(clip);
 
             _bakeClips.Clear();
-            foreach (AnimationClip clip in settings.clips)
-                if (clip) _bakeClips.Add(clip);
+            if (settings.clips?.Count > 0)
+                foreach (AnimationClip clip in settings.clips)
+                    if (clip) _bakeClips.Add(clip);
 
             // Takes back any clip the Animator does not supply, which is what an asset written before
             // added clips existed needs in order to load with its bake set whole.

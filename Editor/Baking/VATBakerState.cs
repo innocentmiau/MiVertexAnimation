@@ -128,9 +128,11 @@ namespace MiVertexAnimation
 
             if (!sameOutput) return false;
 
-            if (addedClips.Count != other.addedClips.Count) return false;
+            // A snapshot deserialized from an older build of this package can arrive without the list.
+            int addedHere = addedClips?.Count ?? 0;
+            if (addedHere != (other.addedClips?.Count ?? 0)) return false;
 
-            for (int i = 0; i < addedClips.Count; i++)
+            for (int i = 0; i < addedHere; i++)
                 if (addedClips[i] != other.addedClips[i]) return false;
 
             if (bakeClips.Count != other.bakeClips.Count) return false;

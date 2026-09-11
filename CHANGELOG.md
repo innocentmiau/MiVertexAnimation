@@ -5,6 +5,14 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1]
+
+### Fixed
+
+- **The baker window recovers from a snapshot it cannot read** instead of failing on every repaint. The window carries its state across an assembly reload by serializing it, and updating the package while the window is open is an assembly reload where the code reading that state is not the code that wrote it. A list that arrives missing threw inside `OnEnable`, and a window whose `OnEnable` did not finish reports that as a GUI error once per repaint rather than once, so the console fills with messages that all describe the same failure and none of them name it. The restore is guarded now and drops a snapshot it cannot read, saying so once. **Tools > MiVertexAnimation > Reset Baker Window** does the same thing on demand, for a window wedged by something the restore could not see coming.
+
+- **Adding a clip mid-repaint left the window's layout out of step with itself**, which IMGUI reports as a control count that does not match the one the pass laid out. Every clip added draws another row, and the drop area and its object field both changed the list without ending the pass that had already measured the old one. They end it now, which is what the rest of the window has always done wherever an edit changes how many controls there are.
+
 ## [1.6.0]
 
 ### Added
