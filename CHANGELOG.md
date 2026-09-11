@@ -5,6 +5,18 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0]
+
+### Added
+
+- **Clips can be added straight from the project**, instead of only being read off the target's Animator Controller. Drop AnimationClips onto the Animation section, or pick one with the object field beside it, and they join the bake list like any other clip with an `added` tag beside them to say where they came from. Libraries of downloaded animation ship one clip per file, so a character with forty of them meant forty states in a controller that nothing would ever play, wired up purely so the baker could see them. `Override Clip` was the only way around that before and it bakes one clip while ignoring every other, so it was never a way to assemble a set. A model with no Animator at all can be baked now: the window offers the same drop area in place of the error it used to stop at. Added clips are held apart from the bake list, so unticking one leaves it in the picker exactly as a controller clip does, and they are saved into the settings asset and covered by undo. A settings asset written before this takes back any clip its Animator no longer supplies rather than silently dropping it.
+
+- A check that an added clip **animates the rig it is being baked against**. A clip authored for a different hierarchy resolves none of its curve paths and bakes a row of identical frames rather than failing, which on screen is indistinguishable from a clip whose animation never got exported. Mismatched clips are named in the list and in a warning above it.
+
+### Fixed
+
+- **A model with Mesh LODs was reported as having none**, so the LOD Group section refused to work and asked for an import setting that was already on. `AvailableLods` took the fewest levels any mesh in the bake carried, and Unity stops generating levels once the next one would come out at around 64 indices, so on a character built from separate meshes the small parts run out long before the big ones. A skeleton whose jaw is 55 vertices and whose body is 899 gets one level for the jaw and several for the body, and the fewest of those is one, which reads as no Mesh LOD at all. The deepest level any mesh carries is what gets offered now. Nothing else had to change for it to be correct, because both extraction paths already clamped per mesh, so a part that has run out keeps reusing its coarsest level while the rest carry on down. The section also says which meshes are doing that, since it is expected on a character built from parts rather than a sign of a broken import.
+
 ## [1.5.0]
 
 ### Added

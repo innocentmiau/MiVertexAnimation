@@ -115,8 +115,9 @@ Unity 6 with URP. On Unity 6.0 and earlier, change `_CLUSTER_LIGHT_LOOP` to
 ## Use
 
 1. **Tools > MiVertexAnimation > Baker**
-2. Drop in a prefab with a SkinnedMeshRenderer and an Animator.
-3. Pick a clip, set the frame range and frame step.
+2. Drop in a prefab with a SkinnedMeshRenderer.
+3. Pick a clip, or drop AnimationClips straight onto the Animation section, then set the frame
+   range and frame step.
 4. Set the output folder and press **Bake VAT**.
 
 The preview at the bottom shows the source rig stepping through **exactly the frames that will
@@ -212,6 +213,25 @@ are on screen, in bake order, each labelled with the **slice index** it will get
 
 That index is what the shader plays, and it is the position in this list - not the row number in
 the Animator Controller. Add clips in whatever order you want them numbered.
+
+### Clips that are not on the Animator
+
+Clips do not have to come from an Animator Controller. Drop AnimationClips onto the Animation
+section, or pick one with the object field beside it, and they join the list with an **added** tag
+saying where they came from. A model with no Animator at all can be baked this way.
+
+This is the way to handle a library of downloaded animation, which ships one clip per file: wiring
+forty of them into a controller that nothing will ever play is work the bake does not need. Drag
+the clip itself out of the model's foldout in the Project window, not the model file, since a model
+holds its clips as sub assets and dropping one would only have to guess which was meant.
+
+Clips exported from packs often all carry the same internal name, which would make them
+indistinguishable at runtime. The name field on each row is what the slice is baked under, so
+rename them there and the duplicate warning clears.
+
+A clip only animates the rig it was authored for. One that addresses a hierarchy this model does
+not have resolves none of its curve paths and bakes a still pose rather than failing, so the baker
+names those in the list and warns above it.
 
 Each becomes one slice of a `Texture2DArray`, so **one material can play any of them**. Slices
 share a size, so shorter clips pad up to the longest. With several clips selected each bakes its

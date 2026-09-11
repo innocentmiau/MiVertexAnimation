@@ -28,6 +28,16 @@ namespace MiVertexAnimation
         public int rendererMode;
         public int rendererIndex;
         public List<AnimationClip> clips = new List<AnimationClip>();
+
+        /*
+         * Clips picked out of the project rather than found on the target's Animator.
+         * Held apart from the bake list so one that has been added and then unticked stays in the picker,
+         * which is how a clip the Animator does supply already behaves.
+         * Added after the fact, so a settings asset written before it exists loads with this empty
+         * and rebuilds what it needs from the bake list.
+         */
+        public List<AnimationClip> addedClips = new List<AnimationClip>();
+
         public AnimationClip explicitClip;
 
         [Header("Animation")]

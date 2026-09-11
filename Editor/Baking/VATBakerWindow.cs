@@ -62,11 +62,21 @@ namespace MiVertexAnimation
         private int _rendererIndex;
         private VATRendererMode _rendererMode = VATRendererMode.SELECTED;
 
+        /*
+         * The pool everything else indexes into, which is the target's Animator clips followed by anything
+         * added out of the project. Rebuilt every repaint by RebuildClipPool rather than kept in step by hand,
+         * because the preview, the picker and the per-clip ranges all address a clip by its position here
+         * and a pool that has drifted shows the wrong animation rather than failing outright.
+         */
         private AnimationClip[] _clips = new AnimationClip[0];
+
+        private AnimationClip[] _controllerClips = new AnimationClip[0];
         private int _clipIndex;
         private AnimationClip _explicitClip;
         private AnimationClip _frameRangeClip;
         private readonly List<AnimationClip> _bakeClips = new List<AnimationClip>();
+        private readonly List<AnimationClip> _addedClips = new List<AnimationClip>();
+        private readonly Dictionary<AnimationClip, bool> _clipFitsTarget = new Dictionary<AnimationClip, bool>();
         private float _blendDuration = .15f;
 
         private List<VATAuthoredClipEvents> _authoredEvents = new List<VATAuthoredClipEvents>();
@@ -541,8 +551,21 @@ namespace MiVertexAnimation
             AnimationClip clip = ResolveClip();
             if (!clip)
             {
-                EditorGUILayout.HelpBox("No AnimationClip available. Assign an Animator Controller with clips, or drop a clip below.", MessageType.Error);
-                _explicitClip = (AnimationClip)EditorGUILayout.ObjectField("Clip", _explicitClip, typeof(AnimationClip), false);
+                /*
+                 * The whole window is gated behind having one clip to show, so the way out of having none
+                 * has to be offered right here rather than in the Animation section further down,
+                 * which this returns before ever reaching.
+                 */
+                EditorGUILayout.HelpBox(
+                    "No AnimationClip available. Drop clips below, or assign an Animator Controller to the model.",
+                    MessageType.Error);
+
+                DrawAddClipsFromAssets();
+
+                _explicitClip = (AnimationClip)EditorGUILayout.ObjectField(
+                    new GUIContent("Override Clip", "Optional. Bakes this clip alone, ignoring the list."),
+                    _explicitClip, typeof(AnimationClip), false);
+
                 DestroyPreview();
                 VATUi.EndSection();
                 return false;
@@ -554,9 +577,11 @@ namespace MiVertexAnimation
 
             VATUi.BeginSection("Animation", VATIcons.ForType(typeof(AnimationClip)));
 
+            RebuildClipPool();
+            _bakeClips.RemoveAll(c => !c);
+
             if (_clips.Length > 0)
             {
-                _bakeClips.RemoveAll(c => !c || !_clips.Contains(c));
                 if (_bakeClips.Count == 0) _bakeClips.Add(_clips[0]);
 
                 if (_clips.Length == 1)
@@ -571,6 +596,8 @@ namespace MiVertexAnimation
                 else
                     DrawClipSelection();
             }
+
+            DrawAddClipsFromAssets();
 
             _explicitClip = (AnimationClip)EditorGUILayout.ObjectField(
                 new GUIContent("Override Clip", "Optional. Bakes this clip alone, ignoring the list."),
@@ -844,6 +871,147 @@ namespace MiVertexAnimation
             DrawEventsSection(clip, frameCount, SelectedClips());
         }
 
+        /*
+         * Added clips are kept as their own list rather than merged into the pool once,
+         * so that unticking one leaves it in the picker exactly as unticking a clip the Animator supplied does.
+         * The bake list is folded in as well, which is what lets a settings asset written before any of this
+         * existed load with its clips intact and take them back as added ones.
+         */
+        /// <summary>Rebuilds the clip pool from the Animator's clips and whatever was added by hand.</summary>
+        private void RebuildClipPool()
+        {
+            List<AnimationClip> pool = new List<AnimationClip>();
+
+            foreach (AnimationClip clip in _controllerClips)
+                if (clip && !pool.Contains(clip)) pool.Add(clip);
+
+            foreach (AnimationClip clip in _addedClips)
+                if (clip && !pool.Contains(clip)) pool.Add(clip);
+
+            foreach (AnimationClip clip in _bakeClips)
+            {
+                if (!clip || pool.Contains(clip)) continue;
+
+                _addedClips.Add(clip);
+                pool.Add(clip);
+            }
+
+            _clips = pool.ToArray();
+        }
+
+        /*
+         * A clip drives transforms by path, so one authored against a different hierarchy resolves nothing
+         * and bakes a row of identical frames instead of failing.
+         * On screen that is indistinguishable from a clip whose animation never got exported,
+         * which sends you looking at the wrong end of the problem, so the mismatch is named here instead.
+         *
+         * Cached because the answer only changes when the target does, and reading the bindings off a clip
+         * allocates an array per call. Over a list of forty clips on a repaint loop that is a lot of garbage
+         * for an answer that cannot have moved.
+         */
+        /// <summary>Whether a clip's curves address transforms that actually exist under the target.</summary>
+        /// <param name="clip">The clip to test.</param>
+        /// <returns>True when any sampled curve path resolves, or when the clip drives no transforms at all.</returns>
+        private bool ClipFitsTarget(AnimationClip clip)
+        {
+            if (!clip || !_target) return true;
+            if (_clipFitsTarget.TryGetValue(clip, out bool cached)) return cached;
+
+            int sampled = 0;
+            int resolved = 0;
+
+            foreach (EditorCurveBinding binding in AnimationUtility.GetCurveBindings(clip))
+            {
+                if (string.IsNullOrEmpty(binding.path)) continue;
+
+                sampled++;
+                if (_target.transform.Find(binding.path)) resolved++;
+
+                // Enough to tell a rig apart from a different one, and cheap on a clip with thousands of curves.
+                if (sampled >= 8) break;
+            }
+
+            bool fits = sampled == 0 || resolved > 0;
+            _clipFitsTarget[clip] = fits;
+            return fits;
+        }
+
+        /// <summary>True when a clip came from the project rather than from the target's Animator.</summary>
+        /// <param name="clip">The clip to place.</param>
+        /// <returns>True when nothing on the Animator supplies it.</returns>
+        private bool IsAddedClip(AnimationClip clip) => clip && !_controllerClips.Contains(clip);
+
+        /*
+         * Wiring an Animator Controller purely so the baker can see a clip is a real cost when the clips arrive
+         * one to an FBX, which is how every library of downloaded animation is shipped:
+         * a character with forty of them meant forty states in a controller that nothing would ever play.
+         *
+         * Override Clip already sidestepped the list, but it bakes one clip and ignores every other,
+         * so it was never a way to assemble a set.
+         */
+        /// <summary>The drop area and object field that add clips straight out of the project.</summary>
+        private void DrawAddClipsFromAssets()
+        {
+            Rect drop = GUILayoutUtility.GetRect(0f, 30f, GUILayout.ExpandWidth(true));
+            GUI.Box(drop, _clips.Length == 0
+                ? "Drop AnimationClips here to bake without an Animator Controller"
+                : "Drop AnimationClips here to add them to the list",
+                EditorStyles.helpBox);
+
+            HandleClipDrop(drop);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.PrefixLabel("Add Clip");
+
+                AnimationClip picked = (AnimationClip)EditorGUILayout.ObjectField(
+                    null, typeof(AnimationClip), false);
+
+                if (picked) AddClip(picked);
+            }
+        }
+
+        /*
+         * Accepts AnimationClip references only. A model file holds its clips as sub assets and dropping one
+         * would have to guess which of them was meant, so the clip itself is what has to be dragged,
+         * from the model's own foldout in the Project window.
+         */
+        /// <summary>Takes a drag of one or more AnimationClips onto a rect and adds them in order.</summary>
+        /// <param name="area">The rect that accepts the drop.</param>
+        private void HandleClipDrop(Rect area)
+        {
+            Event current = Event.current;
+            if (current.type != EventType.DragUpdated && current.type != EventType.DragPerform) return;
+            if (!area.Contains(current.mousePosition)) return;
+
+            bool any = DragAndDrop.objectReferences.Any(o => o is AnimationClip);
+            DragAndDrop.visualMode = any ? DragAndDropVisualMode.Copy : DragAndDropVisualMode.Rejected;
+
+            if (current.type != EventType.DragPerform) return;
+
+            DragAndDrop.AcceptDrag();
+
+            foreach (Object dragged in DragAndDrop.objectReferences)
+                if (dragged is AnimationClip clip) AddClip(clip);
+
+            current.Use();
+        }
+
+        /// <summary>
+        /// Puts a clip in the pool and in the bake list, doing nothing when it is already baking.
+        /// </summary>
+        /// <param name="clip">The clip to add.</param>
+        private void AddClip(AnimationClip clip)
+        {
+            if (!clip || _bakeClips.Contains(clip)) return;
+
+            if (IsAddedClip(clip) && !_addedClips.Contains(clip)) _addedClips.Add(clip);
+
+            _bakeClips.Add(clip);
+            RebuildClipPool();
+            MarkEdited();
+        }
+
         /// <summary>
         /// The bake set: a count, an add button, and the chosen clips in the order they get baked,
         /// so the slice index each one lands on is visible without counting rows.
@@ -874,12 +1042,21 @@ namespace MiVertexAnimation
                 {
                     using (new EditorGUILayout.HorizontalScope())
                     {
+                        bool added = IsAddedClip(_bakeClips[i]);
+
                         using (new EditorGUI.DisabledScope(_bakeClips.Count == 1))
                         {
-                            if (VATUi.Button(new GUIContent("-", "Drop this clip from the bake."),
+                            if (VATUi.Button(new GUIContent("-", added
+                                        ? "Remove this added clip."
+                                        : "Drop this clip from the bake."),
                                     VATUi.DESTRUCTIVE, EditorStyles.miniButton, GUILayout.Width(22f)))
                             {
+                                // An added clip has nothing to fall back to, so unticking it would leave a row
+                                // in the picker that nothing put there. It goes entirely.
+                                if (added) _addedClips.Remove(_bakeClips[i]);
+
                                 _bakeClips.RemoveAt(i);
+                                RebuildClipPool();
                                 MarkEdited();
                                 GUIUtility.ExitGUI();
                             }
@@ -888,13 +1065,39 @@ namespace MiVertexAnimation
                         EditorGUILayout.LabelField(i.ToString(), GUILayout.Width(16f));
                         DrawBakeNameField(_bakeClips[i]);
 
+                        bool fits = ClipFitsTarget(_bakeClips[i]);
+
+                        GUILayout.Label(fits
+                                ? new GUIContent(added ? "added" : "controller")
+                                : new GUIContent("mismatch",
+                                    "This clip animates a hierarchy the target does not have, so it would bake " +
+                                    "as a still pose. It was almost certainly exported from a different rig."),
+                            fits ? EditorStyles.miniLabel : EditorStyles.boldLabel, GUILayout.Width(62f));
+
                         if (GUILayout.Button("preview", EditorStyles.miniButton, GUILayout.Width(58f)))
                             _clipIndex = System.Array.IndexOf(_clips, _bakeClips[i]);
                     }
                 }
             }
 
+            DrawMismatchedClipWarning();
             DrawDuplicateNameWarning();
+        }
+
+        /// <summary>Names the selected clips that animate a hierarchy the target does not have.</summary>
+        private void DrawMismatchedClipWarning()
+        {
+            List<string> wrong = new List<string>();
+
+            foreach (AnimationClip clip in _bakeClips)
+                if (clip && !ClipFitsTarget(clip)) wrong.Add(clip.name);
+
+            if (wrong.Count == 0) return;
+
+            EditorGUILayout.HelpBox(
+                $"{string.Join(", ", wrong)} animate a hierarchy this model does not have, so they would bake " +
+                "as a still pose rather than fail. Check they were exported from the same rig.",
+                MessageType.Warning);
         }
 
         /*
@@ -2558,9 +2761,15 @@ namespace MiVertexAnimation
 
             Animator animator = _target ? _target.GetComponentInChildren<Animator>() : null;
             RuntimeAnimatorController controller = animator ? animator.runtimeAnimatorController : null;
-            _clips = controller ? controller.animationClips.Distinct().ToArray() : new AnimationClip[0];
+            _controllerClips = controller ? controller.animationClips.Distinct().ToArray() : new AnimationClip[0];
+
+            // A clip added by hand was chosen for the old rig, so it goes with it.
+            _addedClips.Clear();
+            _clipFitsTarget.Clear();
             _clipIndex = 0;
             _bakeClips.Clear();
+            RebuildClipPool();
+
             if (_clips.Length > 0) _bakeClips.Add(_clips[0]);
 
             _frameRangeClip = null;
@@ -2682,6 +2891,7 @@ namespace MiVertexAnimation
                 rendererMode = (int)_rendererMode,
                 rendererIndex = _rendererIndex,
                 bakeClips = new List<AnimationClip>(_bakeClips),
+                addedClips = new List<AnimationClip>(_addedClips),
                 explicitClip = _explicitClip,
                 frameRangeClip = _frameRangeClip,
                 clipIndex = _clipIndex,
@@ -2737,8 +2947,12 @@ namespace MiVertexAnimation
             _rendererMode = (VATRendererMode)state.rendererMode;
             _rendererIndex = state.rendererIndex;
 
+            _addedClips.Clear();
+            _addedClips.AddRange(state.addedClips);
+
             _bakeClips.Clear();
             _bakeClips.AddRange(state.bakeClips);
+            RebuildClipPool();
             _explicitClip = state.explicitClip;
             _frameRangeClip = state.frameRangeClip;
             _clipIndex = state.clipIndex;
@@ -3122,9 +3336,17 @@ namespace MiVertexAnimation
             _rendererIndex = settings.rendererIndex;
             _rootIndex = settings.rootIndex;
 
+            _addedClips.Clear();
+            foreach (AnimationClip clip in settings.addedClips)
+                if (clip && IsAddedClip(clip)) _addedClips.Add(clip);
+
             _bakeClips.Clear();
             foreach (AnimationClip clip in settings.clips)
                 if (clip) _bakeClips.Add(clip);
+
+            // Takes back any clip the Animator does not supply, which is what an asset written before
+            // added clips existed needs in order to load with its bake set whole.
+            RebuildClipPool();
 
             if (_bakeClips.Count == 0 && _clips.Length > 0) _bakeClips.Add(_clips[0]);
             _explicitClip = settings.explicitClip;
@@ -3237,6 +3459,7 @@ namespace MiVertexAnimation
             settings.fileName = _fileName;
             settings.createMaterial = _createMaterial;
             settings.materialShader = _materialShader;
+            settings.addedClips = new List<AnimationClip>(_addedClips);
             settings.lodGroup = _lodGroup;
             settings.lodLevels = CloneLodLevels(_lodLevels);
             settings.restPoseMesh = _restPoseMesh;
@@ -4996,7 +5219,7 @@ namespace MiVertexAnimation
             if (available <= 1)
             {
                 EditorGUILayout.HelpBox(
-                    "This mesh has no Mesh LOD levels to take. Select the model, turn on " +
+                    "No mesh in this bake carries Mesh LOD levels. Select the model, turn on " +
                     "Generate Mesh LODs in its Model import settings, and apply.",
                     MessageType.Warning);
 
@@ -5006,9 +5229,11 @@ namespace MiVertexAnimation
 
             EditorGUILayout.LabelField(
                 _rendererMode == VATRendererMode.COMBINED_MESH
-                    ? $"Source has {available} Mesh LOD levels, merged per level as the mesh is."
-                    : $"Source has {available} Mesh LOD levels.",
+                    ? $"Source has up to {available} Mesh LOD levels, merged per level as the mesh is."
+                    : $"Source has up to {available} Mesh LOD levels.",
                 EditorStyles.miniLabel);
+
+            DescribeLodCoverage(renderer);
 
             int removeAt = -1;
             for (int i = 0; i < _lodLevels.Count; i++)
@@ -5193,26 +5418,77 @@ namespace MiVertexAnimation
             return copy;
         }
 
-        /// <summary>Mesh LOD levels the chosen renderer's mesh actually carries.</summary>
+        /*
+         * The most any mesh carries rather than the fewest.
+         *
+         * Unity stops generating levels once the next one would come out at around 64 indices,
+         * so on a character built from separate meshes the small parts run out long before the big ones.
+         * A skeleton whose jaw is 55 vertices and whose body is 899 gets one level for the jaw and several for the body,
+         * and taking the fewest called the whole model free of Mesh LOD while most of it had plenty.
+         *
+         * Offering the most is safe because both extraction paths already clamp per mesh,
+         * ClampLevel for a single renderer and the clamp inside BuildCombinedMesh for a merged one,
+         * so a mesh that has run out keeps reusing its coarsest while the rest carry on down.
+         */
+        /// <summary>The deepest Mesh LOD level any renderer in this bake can supply.</summary>
         private int AvailableLods(SkinnedMeshRenderer renderer)
         {
-            // Every renderer in the bake has to have a level for it to be worth offering, so the
-            // fewest anyone carries is the number the group can actually use.
             if (_rendererMode == VATRendererMode.SELECTED)
             {
                 Mesh single = renderer ? renderer.sharedMesh : null;
                 return single ? Mathf.Max(1, single.lodCount) : 1;
             }
 
-            int fewest = int.MaxValue;
+            int most = 1;
 
             foreach (SkinnedMeshRenderer other in _renderers)
             {
                 Mesh mesh = other ? other.sharedMesh : null;
-                if (mesh) fewest = Mathf.Min(fewest, Mathf.Max(1, mesh.lodCount));
+                if (mesh) most = Mathf.Max(most, mesh.lodCount);
             }
 
-            return fewest == int.MaxValue ? 1 : fewest;
+            return most;
+        }
+
+        /// <summary>
+        /// The meshes that run out of Mesh LOD levels before a given one and fall back to their coarsest.
+        /// </summary>
+        /// <param name="renderer">The selected renderer, used when the bake reads that one alone.</param>
+        /// <param name="level">The source level being asked for.</param>
+        /// <returns>Names of the meshes that cap out below it, in bake order.</returns>
+        private List<string> LodCappedMeshes(SkinnedMeshRenderer renderer, int level)
+        {
+            List<string> capped = new List<string>();
+
+            foreach (SkinnedMeshRenderer target in LodSourceRenderers(renderer))
+            {
+                Mesh mesh = target ? target.sharedMesh : null;
+                if (mesh && mesh.lodCount <= level) capped.Add(mesh.name);
+            }
+
+            return capped;
+        }
+
+        /*
+         * Says nothing at all when every mesh reaches the deepest level in use, which is always the case
+         * on a single mesh and rarely the case on a character built from parts.
+         * Without it a group that quietly reuses a jaw's only level looks identical to one that did not,
+         * and the triangle counts beside each level stop adding up.
+         */
+        /// <summary>Notes which meshes have run out of levels at the deepest one this group asks for.</summary>
+        private void DescribeLodCoverage(SkinnedMeshRenderer renderer)
+        {
+            int deepest = 0;
+            foreach (VATLodLevel entry in _lodLevels) deepest = Mathf.Max(deepest, entry.level);
+
+            List<string> capped = LodCappedMeshes(renderer, deepest);
+            if (capped.Count == 0) return;
+
+            EditorGUILayout.LabelField(
+                $"At source level {deepest}, {capped.Count} mesh(es) have no level that deep and reuse their " +
+                $"coarsest: {string.Join(", ", capped)}. Unity stops generating once a level would reach about " +
+                "64 indices, so small parts capping out early is expected rather than a broken import.",
+                EditorStyles.wordWrappedMiniLabel);
         }
 
         /// <summary>Triangles one source level draws, which is what makes a level worth picking.</summary>

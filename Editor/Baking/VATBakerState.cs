@@ -28,6 +28,7 @@ namespace MiVertexAnimation
         public int rendererIndex;
 
         public List<AnimationClip> bakeClips = new List<AnimationClip>();
+        public List<AnimationClip> addedClips = new List<AnimationClip>();
         public AnimationClip explicitClip;
         public AnimationClip frameRangeClip;
         public int clipIndex;
@@ -126,6 +127,11 @@ namespace MiVertexAnimation
                               && saveSettings == other.saveSettings;
 
             if (!sameOutput) return false;
+
+            if (addedClips.Count != other.addedClips.Count) return false;
+
+            for (int i = 0; i < addedClips.Count; i++)
+                if (addedClips[i] != other.addedClips[i]) return false;
 
             if (bakeClips.Count != other.bakeClips.Count) return false;
 

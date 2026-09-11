@@ -28,6 +28,7 @@ Skinning hundreds of characters costs CPU time you cannot get back, and it is th
 ## What you can do
 
 - **Bake several clips at once** into one texture array, each with its own frame range and frame step.
+- **Take clips straight from the project**, dropped onto the baker, so a library that ships one clip per file does not have to be wired into an Animator Controller first.
 - **Preview before baking**, with the real frame stepping and frame blending, so a setting that would ruin the animation shows up before it costs a bake.
 - **Place animation events** on a track and have them fire at runtime, without an Animator.
 - **Wire those events to UnityEvents** with no code, for the rest of the team.
