@@ -5,6 +5,12 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2]
+
+### Changed
+
+- **A model no longer needs an Animator to be baked.** The window refused any target without one, so a rig whose clips all come from elsewhere had an empty Animator added to it purely to get past the check, which is work that bought nothing. What `SampleAnimation` actually needs depends on the clip: a generic clip drives transforms by path and needs only the hierarchy those paths address, while a humanoid clip carries muscle curves that are retargeted through the rig's Avatar, and an Avatar is reached through an Animator. Only the second case needs the component, so only the second case asks for it. Where one is needed and the model has none, the baker adds it to the throwaway copy it was already making and assigns the Avatar out of the model asset, so nothing is written to the model on disk. A target whose clips are humanoid and whose model has no Avatar at all is the one combination that cannot be made to work, and it now says so plainly instead of baking a still pose that looks like a failed export.
+
 ## [1.6.1]
 
 ### Fixed

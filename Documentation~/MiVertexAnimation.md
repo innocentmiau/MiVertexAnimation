@@ -216,7 +216,15 @@ the Animator Controller. Add clips in whatever order you want them numbered.
 
 ### Clips that are not on the Animator
 
-Clips do not have to come from an Animator Controller. Drop AnimationClips onto the Animation
+Clips do not have to come from an Animator Controller, and **the model does not need an Animator at
+all**. Drop an FBX rig in, add clips from the project, and it bakes.
+
+The one exception is humanoid clips. A generic clip drives transforms by path, so it needs nothing
+but the hierarchy those paths address. A humanoid clip carries muscle curves instead, which are
+retargeted onto the rig through its **Avatar**, and an Avatar is reached through an Animator. Where
+that is needed the baker adds one to the temporary copy it makes and takes the Avatar off the model
+asset, so nothing is written to your model. If the model has no Avatar at all, set its **Rig** to
+Humanoid and apply, and the baker says so rather than quietly baking a still pose. Drop AnimationClips onto the Animation
 section, or pick one with the object field beside it, and they join the list with an **added** tag
 saying where they came from. A model with no Animator at all can be baked this way.
 

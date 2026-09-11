@@ -450,7 +450,7 @@ namespace MiVertexAnimation
                 EditorGUI.BeginChangeCheck();
                 _target = (GameObject)EditorGUILayout.ObjectField(
                     new GUIContent("Prefab / Object",
-                        "A prefab or scene object with a SkinnedMeshRenderer and an Animator."),
+                        "A prefab or scene object with a SkinnedMeshRenderer."),
                     _target, typeof(GameObject), true);
 
                 if (EditorGUI.EndChangeCheck())
@@ -484,7 +484,7 @@ namespace MiVertexAnimation
 
             if (!_target)
             {
-                EditorGUILayout.HelpBox("Assign a prefab with a SkinnedMeshRenderer and an Animator.", MessageType.Info);
+                EditorGUILayout.HelpBox("Assign a prefab with a SkinnedMeshRenderer.", MessageType.Info);
                 DestroyPreview();
                 VATUi.EndSection();
                 return false;
@@ -496,14 +496,6 @@ namespace MiVertexAnimation
             if (_renderers.Length == 0)
             {
                 EditorGUILayout.HelpBox("No SkinnedMeshRenderer found in this object or its children.", MessageType.Error);
-                DestroyPreview();
-                VATUi.EndSection();
-                return false;
-            }
-
-            if (!_target.GetComponentInChildren<Animator>())
-            {
-                EditorGUILayout.HelpBox("No Animator found. SampleAnimation needs one to pose the rig.", MessageType.Error);
                 DestroyPreview();
                 VATUi.EndSection();
                 return false;
@@ -1120,6 +1112,7 @@ namespace MiVertexAnimation
                 }
             }
 
+            DrawMissingAvatarWarning(_bakeClips);
             DrawMismatchedClipWarning();
             DrawDuplicateNameWarning();
         }
@@ -1353,8 +1346,7 @@ namespace MiVertexAnimation
 
             try
             {
-                foreach (Animator animator in instance.GetComponentsInChildren<Animator>(true))
-                    animator.runtimeAnimatorController = null;
+                PrepareForSampling(instance);
 
                 SkinnedMeshRenderer[] instanceRenderers = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true);
                 List<VATPartBake> parts = new List<VATPartBake>();
@@ -2305,8 +2297,7 @@ namespace MiVertexAnimation
 
             _previewInstance = Object.Instantiate(_target);
             _previewInstance.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
-            foreach (Animator animator in _previewInstance.GetComponentsInChildren<Animator>(true))
-                animator.runtimeAnimatorController = null;
+            PrepareForSampling(_previewInstance);
 
             _preview.AddSingleGO(_previewInstance);
 
@@ -2806,6 +2797,85 @@ namespace MiVertexAnimation
                 "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData, Unity.RenderPipelines.Universal.Runtime");
 
             if (type != null && !cameraObject.GetComponent(type)) cameraObject.AddComponent(type);
+        }
+
+        /*
+         * SampleAnimation poses a rig in one of two ways, and only one of them needs an Animator.
+         *
+         * A generic clip drives transforms by path, so it needs nothing beyond the hierarchy those paths address
+         * and a model with no Animator on it at all samples perfectly well.
+         * A humanoid clip carries muscle curves instead, which are retargeted onto the rig through its Avatar,
+         * and an Avatar is reached through an Animator, so that one case does need the component.
+         *
+         * The window used to demand one in every case, which meant adding an empty Animator to a model
+         * for no reason other than to get past the check.
+         * What it actually needs is added here, to the throwaway copy rather than to anyone's asset,
+         * so the model on disk is left exactly as it was found.
+         */
+        /// <summary>
+        /// Gets a freshly instantiated copy into a state where clips sample onto it predictably.
+        /// </summary>
+        /// <param name="instance">The working copy, which is discarded after the bake or the preview.</param>
+        private void PrepareForSampling(GameObject instance)
+        {
+            // A controller left on would keep posing the rig underneath the clip being sampled.
+            foreach (Animator animator in instance.GetComponentsInChildren<Animator>(true))
+                animator.runtimeAnimatorController = null;
+
+            if (instance.GetComponentInChildren<Animator>(true)) return;
+
+            Avatar avatar = FindAvatar();
+            if (!avatar) return;
+
+            Animator added = instance.AddComponent<Animator>();
+            added.avatar = avatar;
+            added.enabled = false;
+        }
+
+        /*
+         * Looked for on the source asset rather than on the target, because the whole point is that the target
+         * may have no Animator to read one from.
+         * An imported rig carries its Avatar as a sub asset of the model file, which is where this finds it.
+         */
+        /// <summary>The Avatar belonging to the target's model, or null when it has none.</summary>
+        /// <returns>The Avatar to retarget humanoid clips through.</returns>
+        private Avatar FindAvatar()
+        {
+            Animator existing = _target ? _target.GetComponentInChildren<Animator>(true) : null;
+            if (existing?.avatar) return existing.avatar;
+
+            string path = _target ? AssetDatabase.GetAssetPath(_target) : string.Empty;
+            if (string.IsNullOrEmpty(path)) return null;
+
+            foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(path))
+                if (asset is Avatar avatar && avatar.isValid) return avatar;
+
+            return null;
+        }
+
+        /*
+         * The one combination that cannot be made to work rather than a blanket refusal.
+         * A humanoid clip with no Avatar anywhere samples nothing at all and bakes a still pose,
+         * which looks exactly like a clip that failed to export, so it is worth saying plainly.
+         */
+        /// <summary>Warns when the selected clips need an Avatar that nothing here can supply.</summary>
+        /// <param name="clips">The clips about to be baked.</param>
+        private void DrawMissingAvatarWarning(List<AnimationClip> clips)
+        {
+            bool humanoid = false;
+            foreach (AnimationClip clip in clips)
+                if (clip && clip.humanMotion) humanoid = true;
+
+            if (!humanoid) return;
+
+            Avatar avatar = FindAvatar();
+            if (avatar && avatar.isHuman) return;
+
+            EditorGUILayout.HelpBox(
+                "These are humanoid clips, so they are retargeted onto the rig through its Avatar, and this " +
+                "model has none. Set the model's Rig to Humanoid and apply, or add an Animator carrying the " +
+                "right Avatar. Generic clips need no Animator at all.",
+                MessageType.Error);
         }
 
         private void Refresh()
@@ -3746,9 +3816,7 @@ namespace MiVertexAnimation
 
             try
             {
-                // Sampling the clip directly is only reliable with the controller out of the way.
-                foreach (Animator animator in instance.GetComponentsInChildren<Animator>(true))
-                    animator.runtimeAnimatorController = null;
+                PrepareForSampling(instance);
 
                 SkinnedMeshRenderer[] instanceRenderers = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true);
                 BuildParts(parts, instanceRenderers, sourceRenderer, baseName);
