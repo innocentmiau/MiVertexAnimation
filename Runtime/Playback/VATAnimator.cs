@@ -186,6 +186,17 @@ namespace MiVertexAnimation
         /// <summary>True while Freeze is holding one pose.</summary>
         public bool IsFrozen => _frozenPhase >= 0f;
 
+        /*
+         * So that something driving clips in bulk can tell whether this animator is in the middle of saying
+         * something it should not be interrupted in. A crowd manager picking idle, walk or run from how fast a
+         * body is moving has no other way to know that the body is part way through an attack or a death, and
+         * without it the gait overwrites the one-shot on the next frame the speed changes.
+         */
+        /// <summary>
+        /// Whether a one-shot clip is still playing, so a caller can avoid cutting it off.
+        /// </summary>
+        public bool IsPlayingOnce => _oneShot;
+
         /// <summary>Where the current clip is, as a fraction of one cycle.</summary>
         public float NormalizedTime => CurrentNormalized();
 

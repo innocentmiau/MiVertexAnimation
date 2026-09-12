@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A model with Mesh LODs was reported as having none**, so the LOD Group section refused to work and asked for an import setting that was already on. `AvailableLods` took the fewest levels any mesh in the bake carried, and Unity stops generating levels once the next one would come out at around 64 indices, so on a character built from separate meshes the small parts run out long before the big ones. A skeleton whose jaw is 55 vertices and whose body is 899 gets one level for the jaw and several for the body, and the fewest of those is one, which reads as no Mesh LOD at all. The deepest level any mesh carries is what gets offered now. Nothing else had to change for it to be correct, because both extraction paths already clamped per mesh, so a part that has run out keeps reusing its coarsest level while the rest carry on down. The section also says which meshes are doing that, since it is expected on a character built from parts rather than a sign of a broken import.
 
+## [1.5.1]
+
+### Added
+
+- **`VATAnimator.IsPlayingOnce`**, whether a one-shot is still running. Anything driving clips in bulk needs it: a crowd manager picking idle, walk or run from how fast a body is moving has no other way to tell that the body is part way through an attack or a death, and without it the gait cuts the one-shot off on the next frame the speed changes.
+
 ## [1.5.0]
 
 ### Added
@@ -116,7 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The section bone filter re-read every mesh's skin weights once per bone per renderer per repaint. `mesh.boneWeights` allocates a fresh array on each access and the cache held one mesh at a time, so spanning six renderers turned a single read into over a hundred. Skin weights and bone subtrees are both cached per renderer now, and section coverage is worked out for all four channels in one pass instead of rebuilding the same mask once per channel.
 
-- A section on a multi-mesh character reported "moves no vertices on this mesh" while the preview highlight showed it working. The mask is built over every renderer the bake reads — Combined Mesh puts all of them in one part — but the warning, the vertex count, the bone dropdown and the bone a new section starts on all asked a single renderer, the one selected above. On a character split into six meshes, a head bone weights only the head mesh, so anything measured against the body reported nothing. All four now span the same renderers the bake does, and the bone list is the union across them rather than one renderer's array.
+- A section on a multi-mesh character reported "moves no vertices on this mesh" while the preview highlight showed it working. The mask is built over every renderer the bake reads (Combined Mesh puts all of them in one part), but the warning, the vertex count, the bone dropdown and the bone a new section starts on all asked a single renderer, the one selected above. On a character split into six meshes, a head bone weights only the head mesh, so anything measured against the body reported nothing. All four now span the same renderers the bake does, and the bone list is the union across them rather than one renderer's array.
 
 - Two clips with the same name no longer share one entry in the baker. Frame ranges and authored events were keyed by clip name, so an `Idle` from one FBX and an `Idle` from another looked like the same clip: editing one range edited both, opening the shorter one clamped the longer one's End Frame down to its length, markers placed on either appeared on both, and **Save Events** wrote one clip's markers over the other's slice in the baked clip set. Both are keyed by clip reference now, and the name is only a label. This also means renaming a clip keeps its range and its events instead of silently orphaning them. Settings assets written before this adopt their clips on load, so nothing needs re-authoring.
 
