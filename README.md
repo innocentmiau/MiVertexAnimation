@@ -75,6 +75,12 @@ on the importer and changing it for everything else using that file. The **reset
 the clip's own name back. It renames the slice only, not the files: those follow **File Name** in the
 Output section.
 
+**Material Slots** decides how many materials the baked mesh is drawn with. A model split across ten
+submeshes is ten draw entries on every instance, and a low poly kit usually points all ten at the same
+atlas. Merging them concatenates triangles and nothing else, so the mesh, the UVs and the baked textures
+come out identical. The preview is painted with the merged slots, so a merge that flattens two different
+looks shows itself before you bake.
+
 You get a prefab that plays, and the pieces it is made of:
 
 | Written | What it is |

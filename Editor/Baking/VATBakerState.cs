@@ -26,6 +26,7 @@ namespace MiVertexAnimation
         public GameObject target;
         public int rendererMode;
         public int rendererIndex;
+        public int slotMerge;
 
         public List<AnimationClip> bakeClips = new List<AnimationClip>();
         public List<AnimationClip> addedClips = new List<AnimationClip>();
@@ -85,6 +86,7 @@ namespace MiVertexAnimation
             bool sameBake = target == other.target
                             && rendererMode == other.rendererMode
                             && rendererIndex == other.rendererIndex
+                            && slotMerge == other.slotMerge
                             && explicitClip == other.explicitClip
                             && frameRangeClip == other.frameRangeClip
                             && clipIndex == other.clipIndex

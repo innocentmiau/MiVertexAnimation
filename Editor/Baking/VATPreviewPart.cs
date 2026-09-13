@@ -19,6 +19,10 @@ namespace MiVertexAnimation
         public SkinnedMeshRenderer Source;
         public Mesh Display;
 
+        // What the bake's material slots would draw this part with, which is not the same as the
+        // renderer's own materials once submeshes are being merged. Null until they are worked out.
+        public Material[] SlotMaterials;
+
         public Vector3[] VerticesA;
         public Vector3[] VerticesB;
         public Vector3[] NormalsA;

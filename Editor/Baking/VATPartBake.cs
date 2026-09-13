@@ -23,9 +23,9 @@ namespace MiVertexAnimation
         // Null when this bake is not writing a group.
         public Mesh[] LodMeshes;
 
-        // One name per submesh, in the order BuildCombinedMesh emits them, so the generated
-        // materials can be told apart at a glance.
-        public readonly List<string> SlotNames = new List<string>();
+        // The material slots this part writes and which submesh goes into which, worked out from the
+        // source materials before the mesh is built. One slot per submesh unless merging removed some.
+        public VATSlotPlan Slots = new VATSlotPlan();
         public Material[] Materials;
 
         public Bounds Bounds;

@@ -63,6 +63,19 @@ namespace MiVertexAnimation
         private VATRendererMode _rendererMode = VATRendererMode.SELECTED;
 
         /*
+         * Defaults to merging the same material asset, which cannot change how anything looks: two
+         * submeshes already pointing at one material draw the same either way. Everything looser than
+         * that is opted into.
+         */
+        private VATSlotMerge _slotMerge = VATSlotMerge.SAME_MATERIAL;
+        private bool _showSlots;
+
+        // Rebuilt only when something it depends on moves, because the summary is drawn every repaint
+        // and comparing two materials property by property is not something to do sixty times a second.
+        [System.NonSerialized] private List<VATSlotPlan> _slotPlans = new List<VATSlotPlan>();
+        [System.NonSerialized] private string _slotPlanKey;
+
+        /*
          * The pool everything else indexes into, which is the target's Animator clips followed by anything
          * added out of the project. Rebuilt every repaint by RebuildClipPool rather than kept in step by hand,
          * because the preview, the picker and the per-clip ranges all address a clip by its position here
@@ -539,7 +552,7 @@ namespace MiVertexAnimation
                     EditorGUILayout.HelpBox(
                         $"{_renderers.Length} renderers, each baked to its own texture pair and material, " +
                         "assembled into one prefab as children.\n" +
-                        "Every part keeps its own base map, and all parts are sampled from the same " +
+                        "Every part gets its own material, and all parts are sampled from the same " +
                         "frames, so they cannot drift apart." +
                         "\nEach part is one renderer, so its mesh is copied rather than rebuilt and " +
                         "keeps its Unity 6 Mesh LOD levels either way." ,
@@ -550,7 +563,7 @@ namespace MiVertexAnimation
                     _rendererIndex = 0;
                     EditorGUILayout.HelpBox(
                         $"{_renderers.Length} renderers merged into a single mesh asset and one texture pair, " +
-                        "with one material generated per submesh so each part keeps its own base map.\n" +
+                        "with one material generated per slot, which is one per submesh until they are merged.\n" +
                         "Cheapest in memory. The merged mesh has no Mesh LOD levels of its own, but the " +
                         "LOD Group section still works: it merges each level as it merges the mesh.",
                         MessageType.Info);
@@ -566,6 +579,8 @@ namespace MiVertexAnimation
                 VATUi.EndSection();
                 return false;
             }
+
+            DrawSlotSection(renderer);
 
             AnimationClip clip = ResolveClip();
             if (!clip)
@@ -2333,6 +2348,7 @@ namespace MiVertexAnimation
                 _previewParts.Add(new VATPreviewPart { Source = source });
             }
 
+            ApplyPreviewSlots();
             _preview.AddSingleGO(_previewDisplay);
 
             // HideAndDontSave or Unity destroys these on the next play mode transition, along with
@@ -2882,6 +2898,7 @@ namespace MiVertexAnimation
         {
             _weightedBones.Clear();
             _boneSubtrees.Clear();
+            _slotPlanKey = null;
 
             _renderers = _target
                 ? _target.GetComponentsInChildren<SkinnedMeshRenderer>(true)
@@ -3019,6 +3036,7 @@ namespace MiVertexAnimation
             {
                 target = _target,
                 rendererMode = (int)_rendererMode,
+                slotMerge = (int)_slotMerge,
                 rendererIndex = _rendererIndex,
                 bakeClips = new List<AnimationClip>(_bakeClips),
                 addedClips = new List<AnimationClip>(_addedClips),
@@ -3075,6 +3093,8 @@ namespace MiVertexAnimation
             }
 
             _rendererMode = (VATRendererMode)state.rendererMode;
+            _slotMerge = (VATSlotMerge)state.slotMerge;
+            _slotPlanKey = null;
             _rendererIndex = state.rendererIndex;
 
             // A snapshot written by an older version of this package has no added clips in it at all.
@@ -3249,6 +3269,8 @@ namespace MiVertexAnimation
             _testWeight = 1f;
 
             _rendererMode = VATRendererMode.SELECTED;
+            _slotMerge = VATSlotMerge.SAME_MATERIAL;
+            _slotPlanKey = null;
             _perClipRanges = false;
             _startFrame = 0;
             _endFrame = 1;
@@ -3464,6 +3486,8 @@ namespace MiVertexAnimation
             Refresh();
 
             _rendererMode = (VATRendererMode)Mathf.Clamp(settings.rendererMode, 0, 2);
+            _slotMerge = (VATSlotMerge)Mathf.Clamp(settings.slotMerge, 0, 3);
+            _slotPlanKey = null;
             _rendererIndex = settings.rendererIndex;
             _rootIndex = settings.rootIndex;
 
@@ -3561,6 +3585,7 @@ namespace MiVertexAnimation
             settings.version = VATBakeSettings.CURRENT_VERSION;
             settings.target = EditorUtility.IsPersistent(_target) ? _target : null;
             settings.rendererMode = (int)_rendererMode;
+            settings.slotMerge = (int)_slotMerge;
             settings.rendererIndex = _rendererIndex;
             settings.clips = new List<AnimationClip>(clips);
             settings.explicitClip = _explicitClip;
@@ -3829,7 +3854,7 @@ namespace MiVertexAnimation
 
                 foreach (VATPartBake part in parts)
                 {
-                    CollectSlotNames(part.Targets, part.SlotNames);
+                    part.Slots = PlanSlots(part.Targets);
                     part.VertexCount = part.Targets.Sum(t => t.sharedMesh.vertexCount);
                     part.RowsPerFrame = Mathf.CeilToInt((float)part.VertexCount / _textureWidth);
                 }
@@ -3910,16 +3935,31 @@ namespace MiVertexAnimation
                     {
                         // Merging is the only reason to rebuild a mesh from nothing. One renderer keeps
                         // its own asset copied whole, which is what carries Mesh LOD across.
-                        Mesh baked = part.Targets.Count == 1
+                        bool single = part.Targets.Count == 1;
+                        Mesh baked = single
                             ? BuildRestPoseMesh(instance, part.Targets[0], part.Name)
-                            : BuildCombinedMesh(instance, part.Targets.ToArray(), part.Name);
+                            : BuildCombinedMesh(instance, part.Targets.ToArray(), part.Name, part.Slots);
 
                         if (SectionsActive) ApplySectionMask(baked, part);
+
+                        /*
+                         * A level is cut from the mesh as it was imported, so the copy is taken before
+                         * the slots are merged: merging rewrites the index buffer and leaves no levels
+                         * to cut. Each level is merged on its own way out instead.
+                         */
+                        Mesh unmerged = single && LodGroupActive && part.Slots.Count < part.Slots.SubMeshCount
+                            ? Object.Instantiate(baked)
+                            : null;
+
+                        if (single) MergeSubMeshes(baked, part.Slots);
 
                         ReportMeshLods(part, baked);
                         part.SourceMesh = SaveMesh(baked, part.Name);
 
-                        if (LodGroupActive) part.LodMeshes = SaveLodMeshes(instance, part, baked);
+                        if (LodGroupActive)
+                            part.LodMeshes = SaveLodMeshes(instance, part, unmerged ? unmerged : baked);
+
+                        if (unmerged) Object.DestroyImmediate(unmerged);
                     }
                 }
 
@@ -4124,14 +4164,14 @@ namespace MiVertexAnimation
                             clipBakes.Count, TextureFormat.RGBAHalf),
                         $"{baseName}_Pivots");
 
-                // One material per submesh so each source part keeps its own base map. They all read
-                // the same VAT arrays, because the submeshes index one shared vertex buffer.
-                part.Materials = new Material[part.SlotNames.Count];
-                for (int i = 0; i < part.SlotNames.Count; i++)
+                // One material per slot, which is one per submesh until merging takes some away.
+                // They all read the same VAT arrays, because the submeshes index one shared vertex buffer.
+                part.Materials = new Material[part.Slots.Count];
+                for (int i = 0; i < part.Slots.Count; i++)
                 {
-                    string materialName = part.SlotNames.Count == 1
+                    string materialName = part.Slots.Count == 1
                         ? part.Name
-                        : $"{part.Name}_{part.SlotNames[i]}";
+                        : $"{part.Name}_{part.Slots.Names[i]}";
 
                     part.Materials[i] = CreateMaterial(materialName, positionArray, normalArray,
                         pivotArray, clipBakes, part.RowsPerFrame, part.TextureHeight,
@@ -4226,7 +4266,8 @@ namespace MiVertexAnimation
             {
                 log.AppendLine($"  {part.Name}: {part.VertexCount} verts, {_textureWidth}x{part.TextureHeight}" +
                                $"x{clipBakes.Count}, {part.RowsPerFrame} rows/frame, " +
-                               $"{part.SlotNames.Count} material(s) [{string.Join(", ", part.SlotNames)}], " +
+                               $"{part.Slots.Count} material(s) [{string.Join(", ", part.Slots.Names)}] " +
+                               $"from {part.Slots.SubMeshCount} submesh(es), " +
                                $"bounds size {part.Bounds.size}");
             }
 
@@ -4930,8 +4971,10 @@ namespace MiVertexAnimation
                  */
                 Mesh level = part.Targets.Count == 1
                     ? BuildLodMesh(full, ClampLevel(part.Targets[0], _lodLevels[i].level), name)
-                    : BuildCombinedMesh(instance, part.Targets.ToArray(), name, _lodLevels[i].level);
+                    : BuildCombinedMesh(instance, part.Targets.ToArray(), name, part.Slots,
+                        _lodLevels[i].level);
 
+                if (part.Targets.Count == 1) MergeSubMeshes(level, part.Slots);
                 if (SectionsActive && part.Targets.Count > 1) ApplySectionMask(level, part);
 
                 meshes[i] = SaveMesh(level, name);
@@ -5009,15 +5052,17 @@ namespace MiVertexAnimation
 
         /// <summary>
         /// Concatenates every target renderer into one vertex buffer, in the same order the frame loop
-        /// writes them, so SV_VertexID keeps addressing the right texel. Submeshes are kept per source
-        /// submesh, so parts with different materials stay separable.
+        /// writes them, so SV_VertexID keeps addressing the right texel. Triangles go into the slots the
+        /// plan asked for, which is one per source submesh unless materials were merged.
         /// </summary>
         /// <param name="instance">The throwaway instance being sampled, which defines the root space.</param>
         /// <param name="targets">Renderers to merge, in the order the frame loop visits them.</param>
         /// <param name="name">Name given to the generated mesh.</param>
+        /// <param name="plan">The material slots to write, walked in the same order as the targets.</param>
+        /// <param name="level">Mesh LOD level to take the indices from.</param>
         /// <returns>The merged mesh at the rest pose, not yet saved as an asset.</returns>
         private static Mesh BuildCombinedMesh(GameObject instance, SkinnedMeshRenderer[] targets, string name,
-                                              int level = 0)
+                                              VATSlotPlan plan, int level = 0)
         {
             List<Vector3> vertices = new List<Vector3>();
             List<Vector3> normals = new List<Vector3>();
@@ -5025,7 +5070,12 @@ namespace MiVertexAnimation
             List<Vector2> uvs = new List<Vector2>();
             List<Vector2> uv2s = new List<Vector2>();
             List<Color> colors = new List<Color>();
-            List<int[]> subMeshes = new List<int[]>();
+
+            List<List<int>> slots = new List<List<int>>();
+            for (int i = 0; i < Mathf.Max(1, plan.Count); i++) slots.Add(new List<int>());
+
+            // Walked alongside the plan, which counted submeshes in this same order.
+            int submesh = 0;
 
             Mesh scratch = new Mesh();
             try
@@ -5081,7 +5131,9 @@ namespace MiVertexAnimation
                         int[] tris = indexSource.GetIndices(sm, wanted);
                         for (int i = 0; i < tris.Length; i++) tris[i] += offset;
 
-                        subMeshes.Add(tris);
+                        int slot = submesh < plan.SlotOf.Count ? plan.SlotOf[submesh] : slots.Count - 1;
+                        slots[Mathf.Clamp(slot, 0, slots.Count - 1)].AddRange(tris);
+                        submesh++;
                     }
                 }
             }
@@ -5100,9 +5152,9 @@ namespace MiVertexAnimation
 
             mesh.SetUVs(1, uv2s);
             mesh.SetColors(colors);
-            mesh.subMeshCount = subMeshes.Count;
-            for (int i = 0; i < subMeshes.Count; i++)
-                mesh.SetTriangles(subMeshes[i], i);
+            mesh.subMeshCount = slots.Count;
+            for (int i = 0; i < slots.Count; i++)
+                mesh.SetTriangles(slots[i], i);
 
             mesh.RecalculateBounds();
             return mesh;
@@ -6181,7 +6233,8 @@ namespace MiVertexAnimation
                 if (!part.Highlighted) return;
 
                 part.Display.colors = null;
-                child.sharedMaterials = part.Source ? part.Source.sharedMaterials : new Material[0];
+                child.sharedMaterials = part.SlotMaterials
+                                        ?? (part.Source ? part.Source.sharedMaterials : new Material[0]);
                 part.Highlighted = false;
                 return;
             }
@@ -6530,37 +6583,371 @@ namespace MiVertexAnimation
             return mesh;
         }
 
+        /*
+         * One slot per submesh is how a model is built, not how it has to be drawn. A low poly kit that
+         * splits a character across ten renderers and gives every one of them the same atlas costs ten
+         * slots a body: ten draw entries to cull, sort and dispatch per instance, ten instanced batches
+         * where one would do, and ten generated materials to set up by hand that all end up identical.
+         *
+         * Merging them is only an index concatenation. Vertices, UVs, the VAT textures, the bounds and
+         * the section masks are all untouched, so nothing about the bake changes except which material
+         * a triangle is drawn with.
+         */
         /// <summary>
-        /// One name per submesh, in the same order BuildCombinedMesh emits them, taken from the source
-        /// renderer's own materials so the generated assets are recognisable.
+        /// Works out the material slots one part will write, before anything is baked.
         /// </summary>
-        /// <param name="targets">Renderers making up one part, in frame-loop order.</param>
-        /// <param name="names">Filled with one unique name per submesh, cleared first.</param>
-        private static void CollectSlotNames(List<SkinnedMeshRenderer> targets, List<string> names)
+        /// <param name="targets">Renderers making up the part, in the order the mesh builder walks them.</param>
+        /// <returns>One name per slot, and the slot each source submesh lands in.</returns>
+        private VATSlotPlan PlanSlots(List<SkinnedMeshRenderer> targets)
         {
-            names.Clear();
+            VATSlotPlan plan = new VATSlotPlan();
             HashSet<string> used = new HashSet<string>();
 
             foreach (SkinnedMeshRenderer target in targets)
             {
+                if (!target) continue;
+
                 Material[] sourceMaterials = target.sharedMaterials;
                 int subMeshCount = target.sharedMesh ? Mathf.Max(1, target.sharedMesh.subMeshCount) : 1;
 
                 for (int i = 0; i < subMeshCount; i++)
                 {
-                    string raw = i < sourceMaterials.Length && sourceMaterials[i]
-                        ? sourceMaterials[i].name
-                        : target.name;
+                    Material material = i < sourceMaterials.Length ? sourceMaterials[i] : null;
+                    int slot = SlotFor(plan, material);
 
-                    string candidate = Sanitize(raw);
-                    string unique = candidate;
-                    int suffix = 1;
-                    while (!used.Add(unique))
-                        unique = $"{candidate}_{suffix++}";
+                    if (slot < 0)
+                    {
+                        string candidate = Sanitize(material ? material.name : target.name);
+                        string unique = candidate;
+                        int suffix = 1;
+                        while (!used.Add(unique))
+                            unique = $"{candidate}_{suffix++}";
 
-                    names.Add(unique);
+                        slot = plan.Count;
+                        plan.Names.Add(unique);
+                        plan.Representatives.Add(material);
+                        plan.Members.Add(new List<Material>());
+                    }
+
+                    if (material && !plan.Members[slot].Contains(material)) plan.Members[slot].Add(material);
+                    plan.SlotOf.Add(slot);
                 }
             }
+
+            return plan;
+        }
+
+        /*
+         * A bake that reuses the imported mesh has no index buffer of its own to rewrite, so there is
+         * nothing to merge however the setting reads. Answered in one place rather than checked at each
+         * of them, so the preview, the summary and the bake all agree about what is going to happen.
+         */
+        /// <summary>The merge this bake can actually do, which is none of it when no mesh is written.</summary>
+        private VATSlotMerge EffectiveSlotMerge => WritesOwnMesh ? _slotMerge : VATSlotMerge.NONE;
+
+        /// <summary>The slot a submesh joins under the current setting, or -1 when it needs one of its own.</summary>
+        private int SlotFor(VATSlotPlan plan, Material material)
+        {
+            VATSlotMerge merge = EffectiveSlotMerge;
+
+            if (merge == VATSlotMerge.NONE || plan.Count == 0) return -1;
+            if (merge == VATSlotMerge.ALL) return 0;
+
+            // A submesh with no material at all is left alone. There is nothing to compare it by, and
+            // the slot it joined would decide what it draws as.
+            if (!material) return -1;
+
+            for (int i = 0; i < plan.Count; i++)
+            {
+                if (plan.Representatives[i] == material) return i;
+
+                if (merge == VATSlotMerge.IDENTICAL &&
+                    Difference(plan.Representatives[i], material) == null) return i;
+            }
+
+            return -1;
+        }
+
+        /*
+         * Compared property by property rather than by asset reference, because a kit that gives every
+         * body part its own material file with the same atlas inside it is exactly the case worth
+         * merging, and not by name, because a name says nothing about what a material draws.
+         *
+         * Keywords and render queue are in because either one changes the look with no property moving.
+         */
+        /// <summary>
+        /// The first thing two materials disagree about, which is what makes them worth separate slots.
+        /// </summary>
+        /// <param name="a">One material. A missing one counts as different from anything.</param>
+        /// <param name="b">The other.</param>
+        /// <returns>What differs, or null when the two would draw the same.</returns>
+        private static string Difference(Material a, Material b)
+        {
+            if (a == b) return null;
+            if (!a || !b) return "one of them is missing";
+            if (a.shader != b.shader) return "shader";
+            if (a.renderQueue != b.renderQueue) return "render queue";
+            if (!new HashSet<string>(a.shaderKeywords).SetEquals(b.shaderKeywords)) return "keywords";
+
+            Shader shader = a.shader;
+            int count = shader.GetPropertyCount();
+
+            for (int i = 0; i < count; i++)
+            {
+                string name = shader.GetPropertyName(i);
+
+                switch (shader.GetPropertyType(i))
+                {
+                    case UnityEngine.Rendering.ShaderPropertyType.Color:
+                        if (a.GetColor(name) != b.GetColor(name)) return name;
+                        break;
+
+                    case UnityEngine.Rendering.ShaderPropertyType.Vector:
+                        if (a.GetVector(name) != b.GetVector(name)) return name;
+                        break;
+
+                    case UnityEngine.Rendering.ShaderPropertyType.Float:
+                    case UnityEngine.Rendering.ShaderPropertyType.Range:
+                        if (!Mathf.Approximately(a.GetFloat(name), b.GetFloat(name))) return name;
+                        break;
+
+                    case UnityEngine.Rendering.ShaderPropertyType.Int:
+                        if (a.GetInteger(name) != b.GetInteger(name)) return name;
+                        break;
+
+                    case UnityEngine.Rendering.ShaderPropertyType.Texture:
+                        if (a.GetTexture(name) != b.GetTexture(name)) return name;
+                        if (a.GetTextureScale(name) != b.GetTextureScale(name)) return $"{name} tiling";
+                        if (a.GetTextureOffset(name) != b.GetTextureOffset(name)) return $"{name} offset";
+                        break;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The renderer groups this bake writes a mesh for, which is what slots are counted across.
+        /// </summary>
+        /// <param name="selected">The renderer chosen in the window, used by Selected mode.</param>
+        /// <returns>One list per part, each in the order the mesh builder would walk it.</returns>
+        private List<List<SkinnedMeshRenderer>> SlotParts(SkinnedMeshRenderer selected)
+        {
+            List<List<SkinnedMeshRenderer>> parts = new List<List<SkinnedMeshRenderer>>();
+            List<SkinnedMeshRenderer> meshed = _renderers.Where(r => r && r.sharedMesh).ToList();
+
+            switch (_rendererMode)
+            {
+                case VATRendererMode.COMBINED_MESH:
+                    parts.Add(meshed);
+                    break;
+
+                case VATRendererMode.SEPARATE_PARTS:
+                    foreach (SkinnedMeshRenderer target in meshed)
+                        parts.Add(new List<SkinnedMeshRenderer> { target });
+                    break;
+
+                default:
+                    if (selected) parts.Add(new List<SkinnedMeshRenderer> { selected });
+                    break;
+            }
+
+            return parts;
+        }
+
+        /*
+         * Sits with the renderer mode because it answers the same question: how many things this bake
+         * leaves the CPU drawing. Five thousand characters of ten submeshes each is fifty thousand draw
+         * entries to cull and sort, and if one atlas is behind all ten, forty-five thousand of them buy
+         * nothing at all.
+         *
+         * The preview is repainted with the same plan, because a merge that flattens two different
+         * looks is invisible anywhere else until the bake has already been written.
+         */
+        /// <summary>
+        /// The Material Slots row: how submeshes share materials, and what that leaves the bake writing.
+        /// </summary>
+        private void DrawSlotSection(SkinnedMeshRenderer renderer)
+        {
+            string key = $"{(int)_slotMerge}:{(int)_rendererMode}:{_rendererIndex}:" +
+                         $"{_renderers.Length}:{WritesOwnMesh}";
+
+            if (_slotPlanKey != key)
+            {
+                _slotPlanKey = key;
+                _slotPlans = SlotParts(renderer).Select(PlanSlots).ToList();
+                ApplyPreviewSlots();
+            }
+
+            int subMeshes = _slotPlans.Sum(p => p.SubMeshCount);
+            if (subMeshes <= 1) return;
+
+            EditorGUI.BeginChangeCheck();
+            _slotMerge = (VATSlotMerge)EditorGUILayout.Popup(
+                new GUIContent("Material Slots",
+                    "How many materials the baked mesh is drawn with. Every slot is a separate draw " +
+                    "entry on every instance, so a character split into ten of them costs ten times " +
+                    "the culling, sorting and batching of one. Merging only concatenates triangles: " +
+                    "the mesh, the UVs and the baked textures are identical either way."),
+                (int)_slotMerge,
+                new[]
+                {
+                    new GUIContent("One per submesh"),
+                    new GUIContent("Merge same material"),
+                    new GUIContent("Merge identical materials"),
+                    new GUIContent("Merge all into one")
+                });
+
+            if (EditorGUI.EndChangeCheck()) MarkEdited();
+
+            int slots = _slotPlans.Sum(p => p.Count);
+            string word = slots == 1 ? "material slot" : "material slots";
+
+            EditorGUILayout.LabelField(" ", slots < subMeshes
+                    ? $"{subMeshes} submeshes become {slots} {word}."
+                    : $"{subMeshes} submeshes, {slots} {word}.",
+                EditorStyles.miniLabel);
+
+            if (_slotMerge != VATSlotMerge.NONE && !WritesOwnMesh)
+            {
+                EditorGUILayout.HelpBox(
+                    "Merging rewrites the mesh's triangles, and this bake reuses the imported mesh as " +
+                    "it is. Turn on Bake Rest Pose Mesh in Output, or combine the renderers, and these " +
+                    "slots merge with it.",
+                    MessageType.Info);
+            }
+
+            DrawSlotList();
+            DrawSlotWarning();
+        }
+
+        /// <summary>The slots themselves, folded away because a model of many parts makes a long list.</summary>
+        private void DrawSlotList()
+        {
+            _showSlots = EditorGUILayout.Foldout(_showSlots, "Slots", true);
+            if (!_showSlots) return;
+
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                foreach (VATSlotPlan plan in _slotPlans)
+                {
+                    for (int i = 0; i < plan.Count; i++)
+                    {
+                        int members = plan.SubMeshesIn(i);
+                        EditorGUILayout.LabelField(plan.Names[i],
+                            members == 1 ? "1 submesh" : $"{members} submeshes", EditorStyles.miniLabel);
+                    }
+                }
+            }
+        }
+
+        /*
+         * Only Merge All can group materials that do not match, so this only ever fires on it. It names
+         * the property rather than saying they differ, because "these two differ in _BaseMap" is a thing
+         * to go and look at, and "these two differ" is not.
+         */
+        /// <summary>Warns when a slot flattened materials that would not have drawn the same.</summary>
+        private void DrawSlotWarning()
+        {
+            foreach (VATSlotPlan plan in _slotPlans)
+            {
+                for (int i = 0; i < plan.Count; i++)
+                {
+                    List<Material> members = plan.Members[i];
+
+                    for (int m = 1; m < members.Count; m++)
+                    {
+                        string difference = Difference(members[0], members[m]);
+                        if (difference == null) continue;
+
+                        EditorGUILayout.HelpBox(
+                            $"Slot '{plan.Names[i]}' merges materials that do not match: " +
+                            $"'{members[0].name}' and '{members[m].name}' differ in {difference}. " +
+                            $"Everything in that slot is drawn as '{members[0].name}'. The preview " +
+                            "shows it as it would bake.",
+                            MessageType.Warning);
+
+                        return;
+                    }
+                }
+            }
+        }
+
+        /*
+         * The preview draws each source renderer with its own materials, which is the one thing that
+         * would hide a bad merge: two materials flattened into one look no different until the bake has
+         * been written and opened. So the preview is painted with the slots the bake would write.
+         */
+        /// <summary>Paints the preview with the material slots the current setting would produce.</summary>
+        private void ApplyPreviewSlots()
+        {
+            if (!_previewDisplay || _previewParts.Count == 0) return;
+
+            bool combined = _rendererMode == VATRendererMode.COMBINED_MESH;
+            VATSlotPlan plan = combined
+                ? PlanSlots(_previewParts.Select(p => p.Source).Where(s => s).ToList())
+                : null;
+
+            int cursor = 0;
+
+            for (int i = 0; i < _previewParts.Count; i++)
+            {
+                VATPreviewPart part = _previewParts[i];
+                if (!part.Source) continue;
+
+                if (!combined)
+                {
+                    plan = PlanSlots(new List<SkinnedMeshRenderer> { part.Source });
+                    cursor = 0;
+                }
+
+                int subMeshCount = part.Source.sharedMesh
+                    ? Mathf.Max(1, part.Source.sharedMesh.subMeshCount)
+                    : 1;
+
+                Material[] materials = new Material[subMeshCount];
+
+                for (int sm = 0; sm < subMeshCount; sm++)
+                {
+                    int slot = cursor + sm < plan.SlotOf.Count ? plan.SlotOf[cursor + sm] : 0;
+                    materials[sm] = slot >= 0 && slot < plan.Count ? plan.Representatives[slot] : null;
+                }
+
+                cursor += subMeshCount;
+                part.SlotMaterials = materials;
+
+                // A highlighted part is wearing the mask material, and putting it back is what the
+                // highlight does when it is turned off.
+                if (part.Highlighted || i >= _previewDisplay.transform.childCount) continue;
+
+                MeshRenderer child = _previewDisplay.transform.GetChild(i).GetComponent<MeshRenderer>();
+                if (child) child.sharedMaterials = materials;
+            }
+        }
+
+        /*
+         * Merging rewrites the index buffer, and a mesh rewritten this way keeps no Unity 6 Mesh LOD
+         * levels: those are extra index ranges on the mesh it was copied from. Only done when it
+         * actually removes a slot, and ReportMeshLods says so if the levels went with it.
+         */
+        /// <summary>Rewrites a mesh's submeshes into the slots a plan asked for.</summary>
+        /// <param name="mesh">The finished mesh, which is edited in place.</param>
+        /// <param name="plan">The slots to write. Ignored when it changes nothing.</param>
+        private static void MergeSubMeshes(Mesh mesh, VATSlotPlan plan)
+        {
+            if (!mesh || plan.Count >= mesh.subMeshCount || plan.SlotOf.Count != mesh.subMeshCount) return;
+
+            List<List<int>> slots = new List<List<int>>();
+            for (int i = 0; i < plan.Count; i++) slots.Add(new List<int>());
+
+            // Every submesh is read before any of them is written, because the write is what destroys
+            // the layout the read depends on.
+            for (int sub = 0; sub < mesh.subMeshCount; sub++)
+                slots[Mathf.Clamp(plan.SlotOf[sub], 0, slots.Count - 1)].AddRange(mesh.GetTriangles(sub));
+
+            mesh.subMeshCount = plan.Count;
+            for (int i = 0; i < slots.Count; i++)
+                mesh.SetTriangles(slots[i], i);
         }
 
         private Vector3 RootOffset(GameObject instance, Transform rootTransform, Vector3 rootReference)

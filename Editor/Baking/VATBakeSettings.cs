@@ -27,6 +27,7 @@ namespace MiVertexAnimation
         public GameObject target;
         public int rendererMode;
         public int rendererIndex;
+        public int slotMerge = (int)VATSlotMerge.NONE;
         public List<AnimationClip> clips = new List<AnimationClip>();
 
         /*

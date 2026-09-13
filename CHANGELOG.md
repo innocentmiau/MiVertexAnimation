@@ -5,6 +5,12 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0]
+
+### Added
+
+- **Material Slots**, which decides how many materials a baked mesh is drawn with. A model split across ten submeshes costs ten draw entries on every instance to cull, sort and dispatch, ten instanced batches instead of one, and ten generated materials to set up by hand, and a low poly kit usually points all ten at the same atlas. The setting merges submeshes that share a material asset (the default, which cannot change how anything looks), or ones whose materials draw the same (compared property by property, keywords and render queue included), or all of them into one. Merging is only an index concatenation, so the vertices, the UVs, the baked textures, the bounds and the section masks come out identical either way. The preview is painted with the slots the bake would write, and a slot that merged materials which do not match names the first property they differ in. A bake settings asset written before this loads as one slot per submesh, so nothing already baked changes under a re-bake.
+
 ## [1.6.3]
 
 ### Added
